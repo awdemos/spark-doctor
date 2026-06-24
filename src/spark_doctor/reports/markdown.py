@@ -35,6 +35,9 @@ def render_markdown(report: ScanReport) -> str:
             if f.recommended_actions:
                 lines.append("**Next steps:**\n")
                 lines.append(_list(f.recommended_actions) + "\n")
+            if f.fix_commands:
+                lines.append("**Suggested commands (review before running):**\n")
+                lines.append("```bash\n" + "\n".join(f.fix_commands) + "\n```\n")
             if f.escalation_actions:
                 lines.append("**Escalation:**\n")
                 lines.append(_list(f.escalation_actions) + "\n")
