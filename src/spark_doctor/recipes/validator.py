@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -45,6 +46,17 @@ def load_recipe(path: str | Path) -> Recipe:
     if not isinstance(data, dict):
         raise ValueError(f"Recipe file {path} does not contain a mapping at top level")
     return Recipe.from_dict(data)
+
+
+def _looks_moe(model_name: str) -> bool:
+    """Best-effort MoE detection from a model name."""
+    m = model_name.lower()
+    if any(tok in m for tok in ("moe", "mixtral")):
+        return True
+    # active-param naming (a3b, a9b, a22b, ...) or expert grid (8x7b, 8x22b)
+    if re.search(r"[-_/]a\d+b\b|\ba\d+b\b|\d+x\d+b", m):
+        return True
+    return False
 
 
 def validate_recipe(
@@ -114,6 +126,44 @@ def validate_recipe(
                 suggested_fix="Start smaller (e.g. 32768) and increase only after stable runs.",
             )
         )
+
+    # vLLM --enforce-eager disables CUDA graphs (P2)
+    command = recipe.runtime.command or ""
+    if "vllm" in recipe.backend.lower() and "--enforce-eager" in command:
+        issues.append(
+            RecipeIssue(
+                id="recipe.vllm_enforce_eager",
+                severity="warning",
+                title="vLLM --enforce-eager disables CUDA graphs",
+                detail=(
+                    "runtime.command contains --enforce-eager, which disables CUDA graph "
+                    "capture. On a benchmark/serve run this typically costs ~2.6x throughput."
+                ),
+                suggested_fix="Remove --enforce-eager unless you are actively debugging; let vLLM capture CUDA graphs.",
+            )
+        )
+
+    # MXFP4 MoE on Blackwell — kernels are SM_100-gated (P3)
+    quant = (recipe.runtime.quantization or "").lower()
+    if "mxfp4" in quant:
+        is_moe = recipe.is_moe if recipe.is_moe is not None else _looks_moe(recipe.model or "")
+        if is_moe:
+            issues.append(
+                RecipeIssue(
+                    id="recipe.mxfp4_moe_on_blackwell",
+                    severity="critical",
+                    title="MXFP4 MoE kernels are SM_100-gated; unsupported on GB10 (sm_121)",
+                    detail=(
+                        f"quantization='{recipe.runtime.quantization}' with a Mixture-of-Experts "
+                        f"model ('{recipe.model}'). MXFP4 MoE kernels are gated to SM_100 and "
+                        "fail or badly underperform on GB10's sm_121."
+                    ),
+                    suggested_fix=(
+                        "Use NVFP4 on GB10 — it is the FP4 format with working sm_121 kernels — "
+                        "or run the model in a non-MXFP4 format."
+                    ),
+                )
+            )
 
     # memory expectations
     expected_min = recipe.expectations.min_mem_available_gb_before_start

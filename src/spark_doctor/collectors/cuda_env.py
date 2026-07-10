@@ -42,6 +42,39 @@ try:
 except Exception as e:
     info["torch_import_ok"] = False
     info["torch_import_error"] = f"{type(e).__name__}: {e}"
+
+# aarch64 + Blackwell prebuilt-wheel gap: flash-attn / bitsandbytes frequently
+# have no sm_121 aarch64 wheel. Record whether they import and carry a CUDA build.
+try:
+    optional = {}
+    # flash_attn: no CPU build exists, so a successful import implies a CUDA build.
+    fa = {}
+    try:
+        import flash_attn
+        fa["import_ok"] = True
+        fa["version"] = getattr(flash_attn, "__version__", None)
+        fa["cuda_build"] = True
+    except Exception as e:
+        fa["import_ok"] = False
+        fa["import_error"] = f"{type(e).__name__}: {e}"
+    optional["flash_attn"] = fa
+    # bitsandbytes: ships a CPU-only fallback build; detect CUDA support best-effort.
+    bnb_info = {}
+    try:
+        import bitsandbytes as bnb
+        bnb_info["import_ok"] = True
+        bnb_info["version"] = getattr(bnb, "__version__", None)
+        cuda_flag = getattr(bnb, "COMPILED_WITH_CUDA", None)
+        if cuda_flag is not None:
+            bnb_info["cuda_build"] = bool(cuda_flag)
+    except Exception as e:
+        bnb_info["import_ok"] = False
+        bnb_info["import_error"] = f"{type(e).__name__}: {e}"
+    optional["bitsandbytes"] = bnb_info
+    info["optional_gpu_packages"] = optional
+except Exception:
+    pass
+
 print(json.dumps(info))
 """
 
