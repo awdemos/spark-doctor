@@ -62,6 +62,7 @@ class ScanReport(BaseModel):
     gpu: dict[str, Any] = Field(default_factory=dict)
     gpu_samples: list[MetricSample] = Field(default_factory=list)
     memory: MemorySnapshot | None = None
+    cuda_env: dict[str, Any] = Field(default_factory=dict)
     docker: dict[str, Any] = Field(default_factory=dict)
     network: dict[str, Any] = Field(default_factory=dict)
     processes: list[ProcessInfo] = Field(default_factory=list)

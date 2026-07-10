@@ -17,7 +17,7 @@ Spark Doctor collects those signals in one command, applies DGX Spark-specific r
 ## Install
 
 ```bash
-git clone <repo-url> && cd spark-doctor
+git clone https://github.com/joeynyc/spark-doctor.git && cd spark-doctor
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
@@ -48,6 +48,10 @@ Exit codes: `0` clean · `1` warning · `2` critical · `3` collector failure.
 | `memory.uma_pressure` | Low `MemAvailable`, high memory PSI, or heavy swap use. |
 | `runtime.docker_unhealthy` | Docker/NVIDIA container runtime missing or misconfigured. |
 | `backend.multiple_heavy_models` | Two or more heavy model backends running concurrently. |
+| `cuda.torch_cu12_wheel` | PyTorch built for CUDA 12 on a CUDA 13 / GB10 system. |
+| `cuda.libcudart_missing` | Package linked against a CUDA runtime (`libcudart.so.N`) that is not installed. |
+| `cuda.sm121_not_in_arch_list` | PyTorch build ships no SM_121 kernels for GB10. |
+| `cuda.nvcc_toolkit_mismatch` | `nvcc` on PATH is older than the driver's CUDA version. |
 
 Recipe validator checks tensor-parallel vs GPU count, container image registry, arm64 compatibility, memory budget, and aggressive `gpu_memory_utilization` / context lengths.
 

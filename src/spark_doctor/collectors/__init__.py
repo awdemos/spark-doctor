@@ -2,6 +2,7 @@ from .os_info import collect_os
 from .firmware import collect_firmware
 from .gpu import collect_gpu
 from .memory import collect_memory
+from .cuda_env import collect_cuda_env
 from .docker_runtime import collect_docker
 from .processes import collect_processes
 from .network import collect_network
@@ -12,6 +13,7 @@ __all__ = [
     "collect_firmware",
     "collect_gpu",
     "collect_memory",
+    "collect_cuda_env",
     "collect_docker",
     "collect_processes",
     "collect_network",

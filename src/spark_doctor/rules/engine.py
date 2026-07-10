@@ -43,6 +43,7 @@ def _lazy_rules() -> list[Rule]:
     from .memory import rule_memory_uma_pressure
     from .runtime import rule_runtime_docker_unhealthy
     from .backend import rule_backend_multiple_heavy_models
+    from .cuda_env import rule_cuda_env_mismatch
 
     return [
         rule_power_low_draw_under_load,
@@ -50,6 +51,7 @@ def _lazy_rules() -> list[Rule]:
         rule_memory_uma_pressure,
         rule_runtime_docker_unhealthy,
         rule_backend_multiple_heavy_models,
+        rule_cuda_env_mismatch,
     ]
 
 
