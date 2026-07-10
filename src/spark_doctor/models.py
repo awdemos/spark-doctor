@@ -55,7 +55,7 @@ class Finding(BaseModel):
 class ScanReport(BaseModel):
     schema_version: str = "0.1"
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    spark_doctor_version: str = "0.1.0"
+    spark_doctor_version: str = "0.2.0"
     anonymized: bool = True
     os: dict[str, Any] = Field(default_factory=dict)
     firmware: dict[str, Any] = Field(default_factory=dict)
