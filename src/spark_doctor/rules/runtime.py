@@ -19,7 +19,12 @@ def _evaluate(report: ScanReport) -> list[Finding]:
         problems.append("Current user cannot access the Docker socket.")
     if not (d.get("nvidia_container_runtime_installed") or d.get("nvidia_ctk_installed")):
         problems.append("nvidia-container-runtime / nvidia-ctk not found.")
-    if d.get("daemon_reachable") and not d.get("nvidia_runtime_available"):
+    if (
+        d.get("daemon_reachable")
+        and not d.get("nvidia_runtime_available")
+        and not d.get("nvidia_hook_installed")
+        and not d.get("cdi_specs_present")
+    ):
         problems.append("NVIDIA runtime is not registered with Docker.")
 
     if not problems:
