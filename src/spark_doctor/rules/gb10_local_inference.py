@@ -50,7 +50,10 @@ def _eval_nemotron_v3_parser(report: ScanReport) -> list[Finding]:
         return []
 
     version = _vllm_version(report)
-    if version != "0.22.1":
+    # Prefix-match on the release before any local/build suffix so that a wheel
+    # like "0.22.1+cu128" still matches.
+    base_version = version.split("+", 1)[0] if version else None
+    if base_version != "0.22.1":
         # Heuristic is only known to apply to 0.22.1; skip otherwise.
         return []
 

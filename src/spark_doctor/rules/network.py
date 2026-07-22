@@ -22,7 +22,8 @@ def _eval_nic_link_speed(report: ScanReport) -> list[Finding]:
 
         name = str(iface.get("name", "?"))
         driver = str(iface.get("driver") or "")
-        realtek_25g = any(x in driver.lower() for x in ("r8127", "r8125"))
+        # RTL8125 binds the in-tree r8169 driver on stock kernels, so match it too.
+        realtek_25g = any(x in driver.lower() for x in ("r8127", "r8125", "r8169"))
 
         source_note = (
             "A NIC in state 'up' negotiating below 1 Gb/s usually indicates a cabling "
@@ -30,9 +31,10 @@ def _eval_nic_link_speed(report: ScanReport) -> list[Finding]:
         )
         if realtek_25g:
             source_note = (
-                "Realtek RTL8127/RTL8125 2.5GbE controllers have a known "
-                "autonegotiation defect that can drop the link well below its rated "
-                "speed; try forcing the speed with ethtool or a different port/cable."
+                "Realtek RTL8127/RTL8125 2.5GbE controllers (RTL8125 binds the in-tree "
+                "r8169 driver on stock kernels) have a known autonegotiation defect that "
+                "can drop the link well below its rated speed; try forcing the speed with "
+                "ethtool or a different port/cable."
             )
 
         findings.append(

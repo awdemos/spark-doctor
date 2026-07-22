@@ -53,8 +53,9 @@ def _looks_moe(model_name: str) -> bool:
     m = model_name.lower()
     if any(tok in m for tok in ("moe", "mixtral")):
         return True
-    # active-param naming (a3b, a9b, a22b, ...) or expert grid (8x7b, 8x22b)
-    if re.search(r"[-_/]a\d+b\b|\ba\d+b\b|\d+x\d+b", m):
+    # active-param naming (a3b, a9b, a22b, ...) or expert grid (8x7b, 8x22b).
+    # `[-_/]` before `a` is a non-word char, so `\ba\d+b\b` already covers it.
+    if re.search(r"\ba\d+b\b|\d+x\d+b", m):
         return True
     return False
 
