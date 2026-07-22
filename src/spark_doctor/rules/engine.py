@@ -45,7 +45,11 @@ def _lazy_rules() -> list[Rule]:
     from .backend import rule_backend_multiple_heavy_models
     from .cuda_env import rule_cuda_env_mismatch
     from .kv_cache import rule_backend_kv_cache_oom
-    from .gb10_local_inference import rule_gb10_local_inference
+    from .network import rule_network_nic_link_below_1g
+    from .gb10_local_inference import (
+        rule_gb10_aarch64_wheel_gap,
+        rule_gb10_nemotron_v3_parser,
+    )
 
     return [
         rule_power_low_draw_under_load,
@@ -55,7 +59,9 @@ def _lazy_rules() -> list[Rule]:
         rule_backend_multiple_heavy_models,
         rule_cuda_env_mismatch,
         rule_backend_kv_cache_oom,
-        rule_gb10_local_inference,
+        rule_network_nic_link_below_1g,
+        rule_gb10_nemotron_v3_parser,
+        rule_gb10_aarch64_wheel_gap,
     ]
 
 
