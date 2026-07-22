@@ -1,0 +1,10 @@
+name: vllm-enforce-eager
+backend: vllm
+model: nvidia/Nemotron-example
+hardware:
+  nodes: 1
+  gpus_per_node: 1
+runtime:
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.80
+  command: "vllm serve nvidia/Nemotron-example --enforce-eager --max-model-len 32768"
