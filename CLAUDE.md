@@ -21,8 +21,8 @@ src/spark_doctor/
   cli.py              # Typer entrypoint
   models.py           # Pydantic: ScanReport, Finding, MetricSample, etc.
   shell.py            # run() — safe subprocess wrapper
-  collectors/         # os_info, firmware, gpu, memory, docker_runtime, processes, network, logs
-  rules/              # engine + power, thermal, memory, runtime, backend
+  collectors/         # os_info, firmware, gpu, memory, docker_runtime, processes, network, logs, cuda_env
+  rules/              # engine + power, thermal, memory, runtime, backend, cuda_env, kv_cache
   recipes/            # schema, validator, known_registry.yaml
   reports/            # console, markdown, forum, github
   privacy/redact.py

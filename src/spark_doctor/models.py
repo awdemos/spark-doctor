@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -54,7 +54,7 @@ class Finding(BaseModel):
 
 class ScanReport(BaseModel):
     schema_version: str = "0.1"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     spark_doctor_version: str = "0.2.0"
     anonymized: bool = True
     os: dict[str, Any] = Field(default_factory=dict)
