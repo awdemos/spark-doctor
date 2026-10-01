@@ -1,0 +1,37 @@
+{
+  "schema_version": "0.1",
+  "created_at": "2026-07-10T09:00:00",
+  "spark_doctor_version": "0.1.0",
+  "anonymized": true,
+  "os": {"arch": "aarch64"},
+  "gpu": {"available": true, "gpu_count": 1, "name": "NVIDIA GB10"},
+  "gpu_samples": [],
+  "memory": {
+    "mem_total_kb": 126000000,
+    "mem_available_kb": 90000000,
+    "swap_total_kb": 16000000,
+    "swap_free_kb": 16000000,
+    "psi_memory": {"full": {"avg10": 0.01}},
+    "psi_io": {}
+  },
+  "cuda_env": {
+    "driver_cuda_version": "13.0",
+    "nvcc_release": "13.0",
+    "libcudart_sonames": ["libcudart.so.13"],
+    "python": {
+      "python_version": "3.12.3",
+      "executable": "/usr/bin/python3",
+      "packages": {"torch": "2.9.0+cu130"},
+      "torch_import_ok": true,
+      "torch_version": "2.9.0+cu130",
+      "torch_cuda_version": "13.0",
+      "torch_cuda_available": true,
+      "torch_arch_list": ["sm_90", "sm_100", "sm_121a"]
+    }
+  },
+  "docker": {},
+  "network": {},
+  "processes": [],
+  "collector_statuses": [],
+  "findings": []
+}

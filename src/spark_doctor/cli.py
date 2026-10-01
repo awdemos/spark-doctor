@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +11,7 @@ from rich.console import Console
 
 from . import __version__
 from .collectors import (
+    collect_cuda_env,
     collect_docker,
     collect_firmware,
     collect_gpu,
@@ -56,7 +57,7 @@ def _build_report(
     include_network_identifiers: bool,
 ) -> ScanReport:
     report = ScanReport(
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         spark_doctor_version=__version__,
         anonymized=anonymize,
     )
@@ -77,6 +78,10 @@ def _build_report(
     mem, s_mem = collect_memory()
     report.memory = mem
     report.collector_statuses.append(s_mem)
+
+    cuda, s_cuda = collect_cuda_env()
+    report.cuda_env = cuda
+    report.collector_statuses.append(s_cuda)
 
     dk, s_dk = collect_docker()
     report.docker = dk
@@ -209,10 +214,12 @@ def anonymize(
 @app.command("self-test")
 def self_test() -> None:
     """Run a minimal self-test that does not require GPU hardware."""
+    from .rules.engine import ALL_RULES
+
     report = ScanReport(spark_doctor_version=__version__)
     report.findings = run_rules(report)
     console.print("[green]self-test ok[/]")
-    console.print(f"rules registered: {len(report.findings) + 5}")  # at least the 5 MVP rules
+    console.print(f"rules registered: {len(ALL_RULES)}")
 
 
 @recipe_app.command("check")

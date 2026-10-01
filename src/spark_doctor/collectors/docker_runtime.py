@@ -1,10 +1,23 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from ..models import CollectorStatus
 from ..shell import run, which
+
+CDI_DIRS = ("/etc/cdi", "/var/run/cdi")
+
+
+def _cdi_specs_present() -> bool:
+    for d in CDI_DIRS:
+        try:
+            if os.path.isdir(d) and any(os.scandir(d)):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def collect_docker() -> tuple[dict[str, Any], CollectorStatus]:
@@ -13,9 +26,12 @@ def collect_docker() -> tuple[dict[str, Any], CollectorStatus]:
         "docker_installed": which("docker") is not None,
         "nvidia_container_runtime_installed": which("nvidia-container-runtime") is not None,
         "nvidia_ctk_installed": which("nvidia-ctk") is not None,
+        "nvidia_hook_installed": which("nvidia-container-runtime-hook") is not None,
+        "cdi_specs_present": _cdi_specs_present(),
         "daemon_reachable": False,
         "socket_accessible": False,
         "nvidia_runtime_available": False,
+        "gpu_container_running": False,
         "runtimes": [],
         "containers": [],
     }
@@ -56,6 +72,23 @@ def collect_docker() -> tuple[dict[str, Any], CollectorStatus]:
             except json.JSONDecodeError:
                 continue
         out["containers"] = containers
+
+        for c in containers:
+            cid = c.get("ID")
+            if not cid:
+                continue
+            inspect = run(
+                ["docker", "inspect", "--format", "{{json .HostConfig.DeviceRequests}}", cid],
+                timeout=5,
+            )
+            if inspect.ok and inspect.stdout.strip() not in ("", "null"):
+                try:
+                    requests = json.loads(inspect.stdout)
+                except json.JSONDecodeError:
+                    requests = None
+                if requests:
+                    out["gpu_container_running"] = True
+                    break
 
     if status.errors and not out["daemon_reachable"]:
         status.ok = False

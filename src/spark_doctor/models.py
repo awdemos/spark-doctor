@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -55,14 +55,15 @@ class Finding(BaseModel):
 
 class ScanReport(BaseModel):
     schema_version: str = "0.1"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    spark_doctor_version: str = "0.1.0"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    spark_doctor_version: str = "0.2.0"
     anonymized: bool = True
     os: dict[str, Any] = Field(default_factory=dict)
     firmware: dict[str, Any] = Field(default_factory=dict)
     gpu: dict[str, Any] = Field(default_factory=dict)
     gpu_samples: list[MetricSample] = Field(default_factory=list)
     memory: MemorySnapshot | None = None
+    cuda_env: dict[str, Any] = Field(default_factory=dict)
     docker: dict[str, Any] = Field(default_factory=dict)
     network: dict[str, Any] = Field(default_factory=dict)
     processes: list[ProcessInfo] = Field(default_factory=list)
