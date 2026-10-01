@@ -53,8 +53,15 @@ Exit codes: `0` clean · `1` warning · `2` critical · `3` collector failure.
 | `cuda.sm121_not_in_arch_list` | PyTorch build ships no SM_121 kernels for GB10. |
 | `cuda.nvcc_toolkit_mismatch` | `nvcc` on PATH is older than the driver's CUDA version. |
 | `backend.kv_cache_oom` | vLLM "No available memory for the cache blocks" — CUDA-graph memory squeezed out the KV cache (fix: `--enforce-eager`), a distinct failure from host `memory.uma_pressure`. |
+| `network.nic_link_below_1g` | An active interface with a known link speed below 1 Gb/s. |
+| `backend.nemotron_v3_discards_primed_reasoning` | A vLLM 0.22.1 environment and a process using the `nemotron_v3` reasoning parser; prompt priming still needs manual verification. |
+| `cuda.aarch64_prebuilt_wheel_gap` | Optional flash-attn or bitsandbytes imports fail or report a CPU-only build on aarch64 + GB10. |
 
 Recipe validator checks tensor-parallel vs GPU count, container image registry, arm64 compatibility, memory budget, and aggressive `gpu_memory_utilization` / context lengths.
+
+Recipes can also declare `runtime.command`, `runtime.quantization`, and an optional top-level `is_moe` override. For vLLM, `--enforce-eager` produces an informational memory/throughput tradeoff note. MXFP4 MoE recipes produce a compatibility warning, not an automatic failure: support depends on the vLLM build and MoE backend. See the [vLLM SM120/SM121 backend documentation](https://docs.vllm.ai/en/latest/features/quantization/b12x/).
+
+Docker collection recognizes named NVIDIA runtimes, runtime hooks, and CDI evidence. The optional `nvidia-ctk cdi list` probe counts NVIDIA GPU device names; failed probes are recorded in collector notes. Optional GPU package imports run in a separate subprocess so a native crash cannot discard the core PyTorch probe results.
 
 ## Privacy
 

@@ -16,6 +16,7 @@ class Runtime(BaseModel):
     gpu_memory_utilization: float | None = None
     max_model_len: int | None = None
     kv_cache_dtype: str | None = None
+    quantization: str | None = None
     command: str | None = None
 
 
@@ -29,6 +30,7 @@ class Recipe(BaseModel):
     name: str
     backend: str
     model: str
+    is_moe: bool | None = None
     hardware: Hardware = Field(default_factory=Hardware)
     runtime: Runtime = Field(default_factory=Runtime)
     expectations: Expectations = Field(default_factory=Expectations)

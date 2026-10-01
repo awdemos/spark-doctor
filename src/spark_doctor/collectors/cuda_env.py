@@ -42,7 +42,47 @@ try:
 except Exception as e:
     info["torch_import_ok"] = False
     info["torch_import_error"] = f"{type(e).__name__}: {e}"
+
 print(json.dumps(info))
+"""
+
+# flash-attn / bitsandbytes can SEGFAULT on import (bad .so against a mismatched
+# CUDA), which would take down the whole probe. Run them in a SEPARATE subprocess
+# so a crash never loses the torch info the core probe already collected.
+_OPTIONAL_PKG_PROBE = r"""
+import json
+optional = {}
+# flash_attn: no CPU build exists, so a successful import implies a CUDA build.
+fa = {}
+try:
+    import flash_attn
+    fa["import_ok"] = True
+    fa["version"] = getattr(flash_attn, "__version__", None)
+    fa["cuda_build"] = True
+except Exception as e:
+    fa["import_ok"] = False
+    fa["import_error"] = f"{type(e).__name__}: {e}"
+optional["flash_attn"] = fa
+# bitsandbytes: ships a CPU-only fallback build; detect CUDA support best-effort.
+bnb_info = {}
+try:
+    import bitsandbytes as bnb
+    bnb_info["import_ok"] = True
+    bnb_info["version"] = getattr(bnb, "__version__", None)
+    cuda_flag = getattr(bnb, "COMPILED_WITH_CUDA", None)
+    if not isinstance(cuda_flag, bool):
+        try:
+            from bitsandbytes.cextension import lib
+            cuda_flag = getattr(lib, "compiled_with_cuda", None)
+        except Exception:
+            cuda_flag = None
+    if isinstance(cuda_flag, bool):
+        bnb_info["cuda_build"] = cuda_flag
+except Exception as e:
+    bnb_info["import_ok"] = False
+    bnb_info["import_error"] = f"{type(e).__name__}: {e}"
+optional["bitsandbytes"] = bnb_info
+print(json.dumps({"optional_gpu_packages": optional}))
 """
 
 
@@ -94,6 +134,24 @@ def collect_cuda_env(python_executable: str = "python3") -> tuple[dict[str, Any]
         status.errors.append(f"python probe: {python_executable} not found")
     elif probe.error:
         status.errors.append(f"python probe: {probe.error}")
+
+    # Isolated probe: importing flash-attn/bitsandbytes can segfault. Run it in a
+    # separate process so a crash here can't lose the torch info above. Only merge
+    # if the core probe produced a python section to attach to.
+    if isinstance(out.get("python"), dict):
+        opt = run([python_executable, "-c", _OPTIONAL_PKG_PROBE], timeout=60)
+        if opt.ok and opt.stdout.strip():
+            try:
+                parsed = json.loads(opt.stdout.strip().splitlines()[-1])
+                if not isinstance(parsed, dict) or not isinstance(
+                    parsed.get("optional_gpu_packages"), dict
+                ):
+                    raise ValueError("invalid optional-package result")
+                out["python"]["optional_gpu_packages"] = parsed["optional_gpu_packages"]
+            except (ValueError, IndexError):
+                status.errors.append("optional-package probe: unparseable output")
+        else:
+            status.errors.append(f"optional-package probe: {opt.error or 'empty output'}")
 
     status.ok = bool(out) or not status.errors
     return out, status

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -45,6 +47,17 @@ def load_recipe(path: str | Path) -> Recipe:
     if not isinstance(data, dict):
         raise ValueError(f"Recipe file {path} does not contain a mapping at top level")
     return Recipe.from_dict(data)
+
+
+def _looks_moe(model_name: str) -> bool:
+    """Best-effort MoE detection from a model name."""
+    m = model_name.lower()
+    if any(tok in m for tok in ("moe", "mixtral")):
+        return True
+    # active-param naming (a3b, a9b, a22b, ...) or expert grid (8x7b, 8x22b).
+    if re.search(r"(?:^|[-_/])a\d+b(?:$|[-_/])|\d+x\d+b", m):
+        return True
+    return False
 
 
 def validate_recipe(
@@ -114,6 +127,52 @@ def validate_recipe(
                 suggested_fix="Start smaller (e.g. 32768) and increase only after stable runs.",
             )
         )
+
+    command = recipe.runtime.command or ""
+    try:
+        command_args = shlex.split(command)
+    except ValueError:
+        command_args = []
+    if recipe.backend.lower() == "vllm" and "--enforce-eager" in command_args:
+        issues.append(
+            RecipeIssue(
+                id="recipe.vllm_enforce_eager",
+                severity="info",
+                title="vLLM --enforce-eager disables CUDA graphs",
+                detail=(
+                    "runtime.command contains --enforce-eager, which disables CUDA graph "
+                    "capture. This can reduce throughput, but also saves graph memory and "
+                    "can prevent KV-cache allocation failures. The tradeoff depends on the workload."
+                ),
+                suggested_fix=(
+                    "Keep --enforce-eager if needed for memory or compatibility. Otherwise "
+                    "benchmark without it and check memory headroom before enabling CUDA graphs."
+                ),
+            )
+        )
+
+    quant = (recipe.runtime.quantization or "").lower()
+    if recipe.backend.lower() == "vllm" and "mxfp4" in quant:
+        is_moe = recipe.is_moe if recipe.is_moe is not None else _looks_moe(recipe.model or "")
+        if is_moe:
+            issues.append(
+                RecipeIssue(
+                    id="recipe.mxfp4_moe_on_blackwell",
+                    severity="warning",
+                    title="Verify the vLLM MXFP4 MoE backend for GB10 (sm_121)",
+                    detail=(
+                        f"quantization='{recipe.runtime.quantization}' with a Mixture-of-Experts "
+                        f"model ('{recipe.model}'). Support on GB10 depends on the vLLM "
+                        "version and selected MoE backend. Some kernel paths target SM_100; "
+                        "others support SM_121. This recipe alone cannot establish compatibility."
+                    ),
+                    suggested_fix=(
+                        "Check your vLLM build's SM_121 support and selected MoE backend, "
+                        "then test the model. Use a validated container or another supported "
+                        "format if the selected backend fails."
+                    ),
+                )
+            )
 
     # memory expectations
     expected_min = recipe.expectations.min_mem_available_gb_before_start

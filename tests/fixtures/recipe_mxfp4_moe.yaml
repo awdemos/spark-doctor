@@ -1,0 +1,11 @@
+name: mxfp4-moe-blackwell
+backend: vllm
+model: openai/gpt-oss-120b
+is_moe: true
+hardware:
+  nodes: 1
+  gpus_per_node: 1
+runtime:
+  tensor_parallel_size: 1
+  gpu_memory_utilization: 0.85
+  quantization: mxfp4
