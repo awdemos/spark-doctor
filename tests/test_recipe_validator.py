@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from spark_doctor.recipes.validator import _looks_moe, load_recipe, validate_recipe
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -44,6 +46,11 @@ def test_enforce_eager_flagged():
     recipe = load_recipe(FIXTURES / "recipe_enforce_eager.yaml")
     result = validate_recipe(recipe, detected_gpu_count=1)
     assert "recipe.vllm_enforce_eager" in _ids(result)
+    issue = next(i for i in result.issues if i.id == "recipe.vllm_enforce_eager")
+    assert issue.severity == "info"
+    assert "KV-cache allocation failures" in issue.detail
+    assert "Keep --enforce-eager" in issue.suggested_fix
+    assert "2.6x" not in issue.detail
 
 
 def test_enforce_eager_absent_no_finding():
@@ -52,14 +59,15 @@ def test_enforce_eager_absent_no_finding():
     assert "recipe.vllm_enforce_eager" not in _ids(result)
 
 
-def test_mxfp4_moe_explicit_is_critical():
+def test_mxfp4_moe_explicit_is_advisory():
     recipe = load_recipe(FIXTURES / "recipe_mxfp4_moe.yaml")
     result = validate_recipe(recipe, detected_gpu_count=1)
     ids = _ids(result)
     assert "recipe.mxfp4_moe_on_blackwell" in ids
-    assert result.status == "fail"
+    assert result.status == "warn"
     issue = next(i for i in result.issues if i.id == "recipe.mxfp4_moe_on_blackwell")
-    assert issue.severity == "critical"
+    assert issue.severity == "warning"
+    assert "cannot establish compatibility" in issue.detail
 
 
 def test_mxfp4_moe_inferred_from_model_name():
@@ -87,5 +95,37 @@ def test_looks_moe_detection():
     assert _looks_moe("mistralai/Mixtral-8x7B")
     assert _looks_moe("some-moe-model")
     assert _looks_moe("foo-8x22b")
+    assert _looks_moe("Qwen_Qwen3.6_35B_A3B_MXFP4")
     assert not _looks_moe("meta-llama/Llama-3.1-8B")
     assert not _looks_moe("google/gemma-2-27b")
+
+
+@pytest.mark.parametrize("backend", ["llama.cpp", "ollama", "sglang"])
+def test_mxfp4_other_backend_does_not_get_vllm_warning(backend: str) -> None:
+    recipe = load_recipe(FIXTURES / "recipe_mxfp4_moe.yaml")
+    recipe.backend = backend
+    result = validate_recipe(recipe)
+    assert "recipe.mxfp4_moe_on_blackwell" not in _ids(result)
+    assert result.status != "fail"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "vllm serve model --enforce-eager=False",
+        "vllm serve model --no-enforce-eager",
+        "vllm serve model --served-model-name=example--enforce-eager",
+        "vllm serve 'unterminated",
+    ],
+)
+def test_eager_match_requires_an_enabled_flag(command: str) -> None:
+    recipe = load_recipe(FIXTURES / "recipe_enforce_eager.yaml")
+    recipe.runtime.command = command
+    assert "recipe.vllm_enforce_eager" not in _ids(validate_recipe(recipe))
+
+
+def test_explicit_dense_model_overrides_name_heuristic() -> None:
+    recipe = load_recipe(FIXTURES / "recipe_mxfp4_moe.yaml")
+    recipe.model = "example/some-moe-model"
+    recipe.is_moe = False
+    assert "recipe.mxfp4_moe_on_blackwell" not in _ids(validate_recipe(recipe))

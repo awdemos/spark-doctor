@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 
 from ..models import CollectorStatus
@@ -21,23 +20,31 @@ def _cdi_specs_present() -> bool:
     return False
 
 
-def _cdi_list_device_count() -> int:
-    """`nvidia-ctk cdi list` enumerates generated CDI device specs; catches specs
-    the /etc/cdi dir scan misses. Best-effort: 0 if the tool is absent/unparseable."""
+def _cdi_list_device_count(status: CollectorStatus) -> int:
+    """Count NVIDIA GPU device names, independent of toolkit log formatting."""
     cdi = run(["nvidia-ctk", "cdi", "list"], timeout=5)
-    if cdi.error == "command_not_found":
+    if not cdi.ok:
+        status.errors.append(f"nvidia-ctk cdi list: {cdi.error or 'probe failed'}")
         return 0
-    m = re.search(r"Found\s+(\d+)\s+CDI device", f"{cdi.stdout}\n{cdi.stderr}")
-    return int(m.group(1)) if m else 0
+    return len({
+        line.strip()
+        for line in cdi.stdout.splitlines()
+        if line.strip().startswith("nvidia.com/gpu=")
+        and line.strip().removeprefix("nvidia.com/gpu=")
+        and len(line.split()) == 1
+    })
 
 
 def _finalize_gpu_readiness(out: dict[str, Any]) -> None:
-    """GPU-in-Docker is ready if ANY GPU-injection path exists: a registered
-    nvidia runtime, a usable CDI spec, or the OCI prestart hook (`--gpus all`)."""
+    """Require a reachable Docker daemon and a detected GPU-injection path."""
     out["gpu_docker_ready"] = bool(
-        out.get("nvidia_runtime_available")
-        or out.get("cdi_specs_present")
-        or out.get("nvidia_hook_installed")
+        out.get("docker_installed")
+        and out.get("daemon_reachable")
+        and (
+            out.get("nvidia_runtime_available")
+            or out.get("cdi_specs_present")
+            or out.get("nvidia_hook_installed")
+        )
     )
 
 
@@ -62,7 +69,7 @@ def collect_docker() -> tuple[dict[str, Any], CollectorStatus]:
     # `nvidia-ctk cdi list` reports generated device specs even when the /etc/cdi
     # dir scan misses them; either signal means a usable CDI spec exists.
     if out["nvidia_ctk_installed"]:
-        out["cdi_device_count"] = _cdi_list_device_count()
+        out["cdi_device_count"] = _cdi_list_device_count(status)
         if out["cdi_device_count"] > 0:
             out["cdi_specs_present"] = True
 

@@ -17,24 +17,22 @@ def _eval_nic_link_speed(report: ScanReport) -> list[Finding]:
         if iface.get("operstate") != "up":
             continue
         speed = iface.get("speed_mbps")
-        if not isinstance(speed, (int, float)) or speed >= 1000:
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 0 < speed < 1000:
             continue
 
         name = str(iface.get("name", "?"))
         driver = str(iface.get("driver") or "")
-        # RTL8125 binds the in-tree r8169 driver on stock kernels, so match it too.
-        realtek_25g = any(x in driver.lower() for x in ("r8127", "r8125", "r8169"))
+        realtek = any(x in driver.lower() for x in ("r8127", "r8125", "r8169"))
 
         source_note = (
             "A NIC in state 'up' negotiating below 1 Gb/s usually indicates a cabling "
             "or autonegotiation fault."
         )
-        if realtek_25g:
+        if realtek:
             source_note = (
-                "Realtek RTL8127/RTL8125 2.5GbE controllers (RTL8125 binds the in-tree "
-                "r8169 driver on stock kernels) have a known autonegotiation defect that "
-                "can drop the link well below its rated speed; try forcing the speed with "
-                "ethtool or a different port/cable."
+                "For Realtek drivers (r8127, r8125, r8169), verify the controller model "
+                "and supported link modes before diagnosing an autonegotiation defect. "
+                "The driver name alone does not establish the rated link speed."
             )
 
         findings.append(
@@ -54,8 +52,8 @@ def _eval_nic_link_speed(report: ScanReport) -> list[Finding]:
                 ),
                 recommended_actions=[
                     "Check the cable and switch port; reseat or replace the cable.",
-                    "Force the link speed with `ethtool -s <iface> speed 2500 autoneg on` "
-                    "(or the rated speed) if autonegotiation is failing.",
+                    "Inspect `ethtool <iface>` for supported and advertised link modes; "
+                    "confirm the NIC and switch support the desired speed before changing settings.",
                 ],
                 source_note=source_note,
             )

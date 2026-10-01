@@ -137,12 +137,15 @@ def collect_cuda_env(python_executable: str = "python3") -> tuple[dict[str, Any]
         if opt.ok and opt.stdout.strip():
             try:
                 parsed = json.loads(opt.stdout.strip().splitlines()[-1])
-                if isinstance(parsed.get("optional_gpu_packages"), dict):
-                    out["python"]["optional_gpu_packages"] = parsed["optional_gpu_packages"]
-            except (json.JSONDecodeError, IndexError):
+                if not isinstance(parsed, dict) or not isinstance(
+                    parsed.get("optional_gpu_packages"), dict
+                ):
+                    raise ValueError("invalid optional-package result")
+                out["python"]["optional_gpu_packages"] = parsed["optional_gpu_packages"]
+            except (ValueError, IndexError):
                 status.errors.append("optional-package probe: unparseable output")
-        elif opt.error and opt.error != "command_not_found":
-            status.errors.append(f"optional-package probe: {opt.error}")
+        else:
+            status.errors.append(f"optional-package probe: {opt.error or 'empty output'}")
 
     status.ok = bool(out) or not status.errors
     return out, status

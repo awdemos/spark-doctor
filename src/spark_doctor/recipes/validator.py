@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -54,8 +55,7 @@ def _looks_moe(model_name: str) -> bool:
     if any(tok in m for tok in ("moe", "mixtral")):
         return True
     # active-param naming (a3b, a9b, a22b, ...) or expert grid (8x7b, 8x22b).
-    # `[-_/]` before `a` is a non-word char, so `\ba\d+b\b` already covers it.
-    if re.search(r"\ba\d+b\b|\d+x\d+b", m):
+    if re.search(r"(?:^|[-_/])a\d+b(?:$|[-_/])|\d+x\d+b", m):
         return True
     return False
 
@@ -128,40 +128,48 @@ def validate_recipe(
             )
         )
 
-    # vLLM --enforce-eager disables CUDA graphs (P2)
     command = recipe.runtime.command or ""
-    if "vllm" in recipe.backend.lower() and "--enforce-eager" in command:
+    try:
+        command_args = shlex.split(command)
+    except ValueError:
+        command_args = []
+    if recipe.backend.lower() == "vllm" and "--enforce-eager" in command_args:
         issues.append(
             RecipeIssue(
                 id="recipe.vllm_enforce_eager",
-                severity="warning",
+                severity="info",
                 title="vLLM --enforce-eager disables CUDA graphs",
                 detail=(
                     "runtime.command contains --enforce-eager, which disables CUDA graph "
-                    "capture. On a benchmark/serve run this typically costs ~2.6x throughput."
+                    "capture. This can reduce throughput, but also saves graph memory and "
+                    "can prevent KV-cache allocation failures. The tradeoff depends on the workload."
                 ),
-                suggested_fix="Remove --enforce-eager unless you are actively debugging; let vLLM capture CUDA graphs.",
+                suggested_fix=(
+                    "Keep --enforce-eager if needed for memory or compatibility. Otherwise "
+                    "benchmark without it and check memory headroom before enabling CUDA graphs."
+                ),
             )
         )
 
-    # MXFP4 MoE on Blackwell — kernels are SM_100-gated (P3)
     quant = (recipe.runtime.quantization or "").lower()
-    if "mxfp4" in quant:
+    if recipe.backend.lower() == "vllm" and "mxfp4" in quant:
         is_moe = recipe.is_moe if recipe.is_moe is not None else _looks_moe(recipe.model or "")
         if is_moe:
             issues.append(
                 RecipeIssue(
                     id="recipe.mxfp4_moe_on_blackwell",
-                    severity="critical",
-                    title="MXFP4 MoE kernels are SM_100-gated; unsupported on GB10 (sm_121)",
+                    severity="warning",
+                    title="Verify the vLLM MXFP4 MoE backend for GB10 (sm_121)",
                     detail=(
                         f"quantization='{recipe.runtime.quantization}' with a Mixture-of-Experts "
-                        f"model ('{recipe.model}'). MXFP4 MoE kernels are gated to SM_100 and "
-                        "fail or badly underperform on GB10's sm_121."
+                        f"model ('{recipe.model}'). Support on GB10 depends on the vLLM "
+                        "version and selected MoE backend. Some kernel paths target SM_100; "
+                        "others support SM_121. This recipe alone cannot establish compatibility."
                     ),
                     suggested_fix=(
-                        "Use NVFP4 on GB10 — it is the FP4 format with working sm_121 kernels — "
-                        "or run the model in a non-MXFP4 format."
+                        "Check your vLLM build's SM_121 support and selected MoE backend, "
+                        "then test the model. Use a validated container or another supported "
+                        "format if the selected backend fails."
                     ),
                 )
             )
