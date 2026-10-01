@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -57,7 +57,7 @@ def _build_report(
     include_network_identifiers: bool,
 ) -> ScanReport:
     report = ScanReport(
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         spark_doctor_version=__version__,
         anonymized=anonymize,
     )

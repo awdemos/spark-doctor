@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from ..models import CollectorStatus, MetricSample
@@ -78,7 +78,7 @@ def _parse_dmon(text: str) -> list[MetricSample]:
         if len(parts) < len(header):
             continue
         row = dict(zip(header, parts))
-        kwargs: dict[str, Any] = {"timestamp": datetime.utcnow()}
+        kwargs: dict[str, Any] = {"timestamp": datetime.now(timezone.utc)}
         for dmon_col, field in DMON_FIELD_MAP.items():
             if dmon_col in row:
                 kwargs[field] = _to_float(row[dmon_col])
@@ -107,7 +107,7 @@ def _sample_via_csv(count: int) -> list[MetricSample]:
         r = rows[0]
         samples.append(
             MetricSample(
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 gpu_utilization_percent=_to_float(r.get("utilization.gpu", "")),
                 gpu_power_draw_watts=_to_float(r.get("power.draw", "")),
                 gpu_clock_mhz=_to_float(r.get("clocks.current.graphics", "")),
