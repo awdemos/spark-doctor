@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from spark_doctor.collectors import cuda_env
+from spark_doctor.models import ScanReport
+from spark_doctor.rules import run_rules
 from spark_doctor.shell import ShellResult
 
 
@@ -63,3 +67,46 @@ def test_optional_probe_merges_package_results(monkeypatch: pytest.MonkeyPatch) 
     assert data["python"]["torch_import_ok"] is True
     assert data["python"]["optional_gpu_packages"] == optional
     assert status.errors == []
+
+
+@pytest.mark.parametrize(
+    ("legacy_flag", "modern_flag", "expected"),
+    [
+        (False, None, False),
+        (True, None, True),
+        (None, False, False),
+        (None, True, True),
+        (None, None, None),
+        (None, "unknown", None),
+    ],
+)
+def test_actual_probe_detects_legacy_and_modern_bitsandbytes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    legacy_flag: bool | None,
+    modern_flag: bool | str | None,
+    expected: bool | None,
+) -> None:
+    bnb = ModuleType("bitsandbytes")
+    bnb.__version__ = "test"
+    if legacy_flag is not None:
+        bnb.COMPILED_WITH_CUDA = legacy_flag
+    extension = ModuleType("bitsandbytes.cextension")
+    extension.lib = SimpleNamespace(compiled_with_cuda=modern_flag)
+    monkeypatch.setitem(sys.modules, "bitsandbytes", bnb)
+    monkeypatch.setitem(sys.modules, "bitsandbytes.cextension", extension)
+    monkeypatch.setitem(sys.modules, "flash_attn", ModuleType("flash_attn"))
+
+    exec(cuda_env._OPTIONAL_PKG_PROBE, {})
+    result = json.loads(capsys.readouterr().out)
+    entry = result["optional_gpu_packages"]["bitsandbytes"]
+    assert entry["import_ok"] is True
+    if expected is None:
+        assert "cuda_build" not in entry
+    else:
+        assert entry["cuda_build"] is expected
+    report = ScanReport(
+        os={"arch": "aarch64"}, gpu={"name": "NVIDIA GB10"}, cuda_env={"python": result}
+    )
+    wheel_gap = [f for f in run_rules(report) if f.rule_id == "cuda.aarch64_prebuilt_wheel_gap"]
+    assert bool(wheel_gap) is (expected is False)

@@ -70,8 +70,14 @@ try:
     bnb_info["import_ok"] = True
     bnb_info["version"] = getattr(bnb, "__version__", None)
     cuda_flag = getattr(bnb, "COMPILED_WITH_CUDA", None)
-    if cuda_flag is not None:
-        bnb_info["cuda_build"] = bool(cuda_flag)
+    if not isinstance(cuda_flag, bool):
+        try:
+            from bitsandbytes.cextension import lib
+            cuda_flag = getattr(lib, "compiled_with_cuda", None)
+        except Exception:
+            cuda_flag = None
+    if isinstance(cuda_flag, bool):
+        bnb_info["cuda_build"] = cuda_flag
 except Exception as e:
     bnb_info["import_ok"] = False
     bnb_info["import_error"] = f"{type(e).__name__}: {e}"
