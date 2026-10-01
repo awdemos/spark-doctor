@@ -11,6 +11,7 @@ def _evaluate(report: ScanReport) -> list[Finding]:
         return []
 
     problems: list[str] = []
+    fix_commands: list[str] = []
     if not d.get("docker_installed"):
         problems.append("Docker is not installed or not on PATH.")
     if d.get("docker_installed") and not d.get("daemon_reachable"):
@@ -26,6 +27,13 @@ def _evaluate(report: ScanReport) -> list[Finding]:
         and not d.get("cdi_specs_present")
     ):
         problems.append("NVIDIA runtime is not registered with Docker.")
+        if d.get("nvidia_ctk_installed"):
+            fix_commands.extend(
+                [
+                    "sudo nvidia-ctk runtime configure --runtime=docker",
+                    "sudo systemctl restart docker",
+                ]
+            )
 
     if not problems:
         return []
@@ -46,8 +54,10 @@ def _evaluate(report: ScanReport) -> list[Finding]:
                 "Install Docker if missing and start the daemon.",
                 "Add your user to the `docker` group and re-login if socket access is denied.",
                 "Install `nvidia-container-toolkit` and register the NVIDIA runtime.",
+                "Schedule any Docker restart around running containers; it may interrupt workloads.",
                 "Re-run `spark-doctor scan` once the runtime is installed.",
             ],
+            fix_commands=fix_commands,
             source_note="Standard NVIDIA container runtime setup.",
         )
     ]

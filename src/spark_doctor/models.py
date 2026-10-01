@@ -48,6 +48,7 @@ class Finding(BaseModel):
     evidence: list[str] = Field(default_factory=list)
     explanation: str = ""
     recommended_actions: list[str] = Field(default_factory=list)
+    fix_commands: list[str] = Field(default_factory=list)
     escalation_actions: list[str] = Field(default_factory=list)
     source_note: str = ""
 
