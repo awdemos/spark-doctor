@@ -58,6 +58,10 @@ def render_console(report: ScanReport, console: Console | None = None) -> None:
                 console.print("   Next steps:")
                 for a in f.recommended_actions:
                     console.print(f"     - {a}")
+            if f.fix_commands:
+                console.print("   Suggested commands (review before running):")
+                for cmd in f.fix_commands:
+                    console.print(Text(f"     {cmd}", style="bold cyan"))
             if f.escalation_actions:
                 console.print("   Escalation:")
                 for a in f.escalation_actions:
