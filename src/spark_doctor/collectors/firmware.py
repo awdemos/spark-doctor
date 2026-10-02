@@ -20,12 +20,14 @@ def collect_firmware(use_sudo: bool = False) -> tuple[dict[str, Any], CollectorS
     fwup = run(["fwupdmgr", "get-devices"], timeout=15)
     if fwup.ok:
         out["fwupdmgr"] = fwup.stdout
-    elif fwup.error != "command_not_found":
+    else:
         status.errors.append(f"fwupdmgr: {fwup.error}")
 
     sb = run(["mokutil", "--sb-state"], timeout=5)
     if sb.ok:
         out["secure_boot"] = sb.stdout.strip()
+    else:
+        status.errors.append(f"mokutil --sb-state: {sb.error}: {sb.stderr.strip()[:200]}")
 
     status.ok = bool(out) or not status.errors
     return out, status

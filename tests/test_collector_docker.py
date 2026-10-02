@@ -90,16 +90,20 @@ def test_failed_cdi_probe_does_not_claim_readiness(
 def test_collected_cdi_evidence_reaches_runtime_rule(
     monkeypatch: pytest.MonkeyPatch, device: str
 ) -> None:
+    monkeypatch.setenv("DOCKER_CONTEXT", "default")
     monkeypatch.setattr(
         docker_runtime, "which",
         lambda cmd: f"/usr/bin/{cmd}" if cmd in ("docker", "nvidia-ctk") else None,
     )
     monkeypatch.setattr(docker_runtime, "_cdi_specs_present", lambda: False)
 
-    def fake_run(args: list[str], *, timeout: float) -> ShellResult:
+    def fake_run(args: list[str], *, timeout: float, env: dict[str, str] | None = None) -> ShellResult:
         if args == ["nvidia-ctk", "cdi", "list"]:
             return ShellResult("ctk", True, 0, device + "\n", "Found 1 CDI devices")
-        output = '{"Runtimes":{"runc":{}}}' if args[1] == "info" else "{}"
+        assert args[:3] == ["docker", "--host", "unix:///var/run/docker.sock"]
+        output = '{"Runtimes":{"runc":{}}}' if args[3] == "info" else "{}"
+        if args[3] == "ps":
+            output = ""
         return ShellResult("docker", True, 0, output, "")
 
     monkeypatch.setattr(docker_runtime, "run", fake_run)

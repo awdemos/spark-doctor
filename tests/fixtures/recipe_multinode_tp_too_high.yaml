@@ -1,0 +1,10 @@
+name: bad-vllm-two-sparks
+backend: vllm
+model: example/model
+hardware:
+  nodes: 2
+  gpus_per_node: 1
+runtime:
+  tensor_parallel_size: 64
+expectations:
+  requires_docker: false

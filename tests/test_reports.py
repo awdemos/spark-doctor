@@ -5,11 +5,32 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from spark_doctor.models import ScanReport
+from spark_doctor.models import CollectorStatus, Finding, ScanReport
 from spark_doctor.reports import render_console, render_forum, render_github, render_markdown
 from spark_doctor.rules import run_rules
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.mark.parametrize("render", [render_markdown, render_forum, render_github])
+def test_incomplete_reports_never_claim_clean(render):
+    report = ScanReport(collector_statuses=[CollectorStatus(name="gpu", ok=False, errors=["timeout"])])
+    text = render(report)
+    assert "Incomplete" in text
+    assert "No issues detected" not in text
+    assert "no issues detected" not in text
+
+
+def test_forum_does_not_claim_raw_report_is_redacted():
+    text = render_forum(ScanReport(anonymized=False))
+    assert "Personal identifiers have been redacted" not in text
+    assert "not been redacted" in text
+
+
+def test_markdown_shows_diagnosed_python():
+    report = ScanReport(cuda_env={"python": {"executable": "/opt/workload/python", "torch_import_ok": False}})
+    assert "/opt/workload/python" in render_markdown(report)
+    assert "Selected Python environment" in render_markdown(report)
 
 
 def _load(name: str) -> ScanReport:
@@ -64,6 +85,21 @@ def test_console_includes_suggested_commands_literally():
     assert "sudo nvidia-ctk runtime configure --runtime=docker" in text
     assert "sudo systemctl restart docker" in text
     assert "printf '[bold]literal[/bold]'" in text
+
+
+def test_console_renders_all_dynamic_text_literally():
+    literal = "[/bogus]"
+    report = ScanReport(
+        gpu={"peak": {"gpu_power_draw_watts": 20}, "sampler": literal},
+        collector_statuses=[CollectorStatus(name=literal, ok=False, errors=[literal])],
+        findings=[Finding(
+            rule_id=literal, title=literal, severity="warning", evidence=[literal],
+            explanation=literal, recommended_actions=[literal], escalation_actions=[literal],
+        )],
+    )
+    output = StringIO()
+    render_console(report, Console(file=output, width=160, color_system=None))
+    assert output.getvalue().count(literal) == 9
 
 
 def test_existing_findings_need_no_fix_commands():

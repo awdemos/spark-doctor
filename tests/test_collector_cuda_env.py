@@ -54,7 +54,12 @@ def test_optional_probe_merges_package_results(monkeypatch: pytest.MonkeyPatch) 
 
     def fake_run(args: list[str], *, timeout: float) -> ShellResult:
         if args[0] != "test-python":
-            return ShellResult(args[0], False, None, "", "", "command_not_found")
+            output = {
+                "nvidia-smi": "CUDA Version: 13.0",
+                "nvcc": "release 13.0",
+                "ldconfig": "",
+            }[args[0]]
+            return ShellResult(args[0], True, 0, output, "")
         result = (
             {"torch_import_ok": True}
             if args[2] == cuda_env._PY_PROBE

@@ -29,6 +29,7 @@ Requires Python 3.11+.
 ```bash
 spark-doctor scan                              # full scan + diagnosis
 spark-doctor scan --json scan.json --markdown report.md
+spark-doctor scan --python /path/to/workload/.venv/bin/python
 spark-doctor doctor --from scan.json           # re-run rules on saved scan
 spark-doctor report --from scan.json --format {markdown,forum,github}
 spark-doctor recipe check recipe.yaml
@@ -37,7 +38,9 @@ spark-doctor self-test
 spark-doctor version
 ```
 
-Exit codes: `0` clean · `1` warning · `2` critical · `3` collector failure.
+Exit codes for `scan` and `doctor`: `0` clean · `1` warning · `2` critical · `3` incomplete diagnosis (collector or rule failure). Incomplete diagnosis takes precedence over finding severity; existing warning/critical findings remain visible. Exporting a report succeeds with `0` even if the saved diagnosis is incomplete; the exported report retains that status.
+
+CUDA/package checks inspect `python3` on PATH unless you select a workload interpreter with `--python`. Reports identify the selected environment; a scan does not inspect other virtual environments or container Python installations automatically. If PyTorch cannot be imported there, its CUDA compatibility has not been assessed.
 
 ## What it detects
 
@@ -59,6 +62,10 @@ Exit codes: `0` clean · `1` warning · `2` critical · `3` collector failure.
 
 Recipe validator checks tensor-parallel vs GPU count, container image registry, arm64 compatibility, memory budget, and aggressive `gpu_memory_utilization` / context lengths.
 
+Recipe fields reject unknown keys and invalid numeric values. Tensor parallelism must fit the declared `nodes × gpus_per_node` capacity; single-node recipes also respect `--gpus`. Remote-node capacity is declared, not discovered. Available-memory and architecture checks require `--mem-available-gb` and `--arch`, respectively.
+
+A critical low-power finding requires at least three consecutive qualifying samples. Missing readings, recovered readings, or timestamp gaps break the sequence. Transient readings prompt confirmation and resampling before power-cycle advice.
+
 Recipes can also declare `runtime.command`, `runtime.quantization`, and an optional top-level `is_moe` override. For vLLM, `--enforce-eager` produces an informational memory/throughput tradeoff note. MXFP4 MoE recipes produce a compatibility warning, not an automatic failure: support depends on the vLLM build and MoE backend. See the [vLLM SM120/SM121 backend documentation](https://docs.vllm.ai/en/latest/features/quantization/b12x/).
 
 Docker collection recognizes named NVIDIA runtimes, runtime hooks, and CDI evidence. The optional `nvidia-ctk cdi list` probe counts NVIDIA GPU device names; failed probes are recorded in collector notes. Optional GPU package imports run in a separate subprocess so a native crash cannot discard the core PyTorch probe results.
@@ -67,14 +74,21 @@ Docker collection recognizes named NVIDIA runtimes, runtime hooks, and CDI evide
 
 Reports are anonymized by default:
 
-- Hostname, username, and home paths replaced.
+- Locally detected hostname/username and recognized home paths replaced; imported hostnames are inferred from `uname` when available.
 - Private IPv4 and MAC addresses redacted unless `--include-network-identifiers`.
 - HF, NGC, OpenAI, bearer, JWT, and SSH-key patterns redacted.
+- Credentials in process arguments (including `--api-key VALUE`) and structured secret fields redacted.
 - Logs (`dmesg`, `journalctl`) only included with `--include-logs`.
+
+`doctor` and `report` reapply redaction to imported scans by default. `--include-network-identifiers` keeps network identifiers; `--include-sensitive-data` explicitly keeps raw data, including credentials, and replaces the old `scan --no-anonymize` option. Review any report before sharing: automatic redaction cannot recognize every possible secret.
+
+Imported raw logs may still contain bare source usernames when the source identity is unknown. Review those logs before sharing.
 
 ## Safety
 
 No package installs, driver updates, process kills, reboots, clock locking, or power changes. All fixes are instructions.
+
+Docker checks only use local Unix sockets, including a configured rootless socket. A remote Docker host/context is recorded as an incomplete check and is never contacted.
 
 ## Development
 
@@ -84,6 +98,8 @@ pytest
 ```
 
 New rules go in `src/spark_doctor/rules/`, register in `rules/engine.py`, add a fixture in `tests/fixtures/`, add a test.
+
+GitHub Actions runs the test suite and CLI self-test on Python 3.11–3.14. Collector regression tests use mocked command results and do not require GPU hardware or a Docker daemon.
 
 ## License
 

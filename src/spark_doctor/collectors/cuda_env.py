@@ -12,6 +12,7 @@ from ..shell import run
 _PY_PROBE = r"""
 import json, platform, sys
 info = {"python_version": platform.python_version(), "executable": sys.executable}
+probe_errors = []
 try:
     from importlib.metadata import PackageNotFoundError, version
     pkgs = {}
@@ -21,11 +22,11 @@ try:
             pkgs[pkg] = version(pkg)
         except PackageNotFoundError:
             pass
-        except Exception:
-            pass
+        except Exception as e:
+            probe_errors.append(f"package metadata {pkg}: {type(e).__name__}: {e}")
     info["packages"] = pkgs
-except Exception:
-    pass
+except Exception as e:
+    probe_errors.append(f"package metadata: {type(e).__name__}: {e}")
 try:
     import torch
     info["torch_import_ok"] = True
@@ -43,6 +44,8 @@ except Exception as e:
     info["torch_import_ok"] = False
     info["torch_import_error"] = f"{type(e).__name__}: {e}"
 
+if probe_errors:
+    info["probe_errors"] = probe_errors
 print(json.dumps(info))
 """
 
@@ -107,33 +110,52 @@ def parse_ldconfig_libcudart(text: str) -> list[str]:
 
 def collect_cuda_env(python_executable: str = "python3") -> tuple[dict[str, Any], CollectorStatus]:
     status = CollectorStatus(name="cuda_env", ok=True)
-    out: dict[str, Any] = {}
+    out: dict[str, Any] = {"python_executable": python_executable}
 
     smi = run(["nvidia-smi"], timeout=8)
     if smi.ok:
         out["driver_cuda_version"] = parse_smi_cuda_version(smi.stdout)
-    elif smi.error != "command_not_found":
+        if out["driver_cuda_version"] is None:
+            status.errors.append("nvidia-smi: CUDA version missing from output")
+    else:
         status.errors.append(f"nvidia-smi: {smi.error}")
 
     nvcc = run(["nvcc", "--version"], timeout=8)
     if nvcc.ok:
         out["nvcc_release"] = parse_nvcc_release(nvcc.stdout)
+        if out["nvcc_release"] is None:
+            status.errors.append("nvcc: release missing from output")
+    elif nvcc.error != "command_not_found":
+        status.errors.append(f"nvcc: {nvcc.error}: {nvcc.stderr.strip()[:200]}")
 
     ld = run(["ldconfig", "-p"], timeout=8)
     if ld.ok:
         out["libcudart_sonames"] = parse_ldconfig_libcudart(ld.stdout)
+    else:
+        status.errors.append(f"ldconfig: {ld.error}: {ld.stderr.strip()[:200]}")
 
     # First torch import on this platform can take tens of seconds.
     probe = run([python_executable, "-c", _PY_PROBE], timeout=60)
     if probe.ok and probe.stdout.strip():
         try:
-            out["python"] = json.loads(probe.stdout.strip().splitlines()[-1])
-        except (json.JSONDecodeError, IndexError):
+            parsed = json.loads(probe.stdout.strip().splitlines()[-1])
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("torch_import_ok"), bool):
+                raise ValueError("invalid python result")
+            out["python"] = parsed
+            probe_errors = parsed.get("probe_errors", [])
+            if not isinstance(probe_errors, list) or not all(isinstance(error, str) for error in probe_errors):
+                status.errors.append("python probe: unparseable probe errors")
+            else:
+                status.errors.extend(f"python probe: {error[:200]}" for error in probe_errors)
+            for name in ("torch_cuda_available_error", "torch_arch_list_error"):
+                if parsed.get(name):
+                    status.errors.append(f"python probe {name}: {str(parsed[name])[:200]}")
+        except (ValueError, IndexError):
             status.errors.append("python probe: unparseable output")
     elif probe.error == "command_not_found":
         status.errors.append(f"python probe: {python_executable} not found")
-    elif probe.error:
-        status.errors.append(f"python probe: {probe.error}")
+    else:
+        status.errors.append(f"python probe: {probe.error or 'empty output'}")
 
     # Isolated probe: importing flash-attn/bitsandbytes can segfault. Run it in a
     # separate process so a crash here can't lose the torch info above. Only merge
@@ -153,5 +175,5 @@ def collect_cuda_env(python_executable: str = "python3") -> tuple[dict[str, Any]
         else:
             status.errors.append(f"optional-package probe: {opt.error or 'empty output'}")
 
-    status.ok = bool(out) or not status.errors
+    status.ok = len(out) > 1 or not status.errors
     return out, status

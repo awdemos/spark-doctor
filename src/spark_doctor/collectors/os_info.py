@@ -35,33 +35,41 @@ def collect_os() -> tuple[dict[str, Any], CollectorStatus]:
     arch = run(["uname", "-m"])
     if arch.ok:
         out["arch"] = arch.stdout.strip()
+    else:
+        status.errors.append(f"uname -m: {arch.error}")
 
     uptime = read_text("/proc/uptime")
     if uptime:
         try:
             out["uptime_seconds"] = float(uptime.split()[0])
         except (ValueError, IndexError):
-            pass
+            status.errors.append("/proc/uptime: invalid value")
+    else:
+        status.errors.append("missing:/proc/uptime")
 
     loadavg = read_text("/proc/loadavg")
     if loadavg:
         parts = loadavg.split()
-        if len(parts) >= 3:
+        try:
             out["loadavg"] = [float(parts[0]), float(parts[1]), float(parts[2])]
+        except (ValueError, IndexError):
+            status.errors.append("/proc/loadavg: invalid values")
+    else:
+        status.errors.append("missing:/proc/loadavg")
 
     pkg = run(
         ["dpkg-query", "-W", "-f=${Package} ${Version}\n",
          "*nvidia*", "*cuda*", "*dgx*", "docker*"],
         timeout=8,
     )
-    if pkg.ok and pkg.stdout:
+    if pkg.stdout:
         packages: dict[str, str] = {}
         for line in pkg.stdout.splitlines():
             parts = line.strip().split(None, 1)
             if len(parts) == 2 and parts[1]:
                 packages[parts[0]] = parts[1]
         out["packages"] = packages
-    elif pkg.error and pkg.error != "command_not_found":
+    if not pkg.ok:
         status.errors.append(f"dpkg-query: {pkg.error}")
 
     if not status.errors:

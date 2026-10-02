@@ -20,6 +20,14 @@ def test_hook_installed_no_named_runtime_no_finding():
     assert not any(f.rule_id == "runtime.docker_unhealthy" for f in findings)
 
 
+def test_skipped_remote_daemon_does_not_claim_local_socket_failure():
+    report = ScanReport(docker={
+        "docker_installed": True, "daemon_reachable": False,
+        "socket_accessible": False, "daemon_check_skipped": True,
+    })
+    assert not any(f.rule_id == "runtime.docker_unhealthy" for f in run_rules(report))
+
+
 def test_cdi_present_no_named_runtime_no_finding():
     report = _load("docker_cdi_no_named_runtime.json")
     findings = run_rules(report)

@@ -21,6 +21,8 @@ def render_markdown(report: ScanReport) -> str:
     lines.append(f"Spark Doctor version: {report.spark_doctor_version}  ")
     lines.append(f"Created at: {report.created_at.isoformat()}  ")
     lines.append(f"Anonymized: {report.anonymized}\n")
+    if report.incomplete:
+        lines.append("Some checks could not finish. See collector notes and rule errors; system health is not fully assessed.\n")
 
     # Summary of findings
     if report.findings:
@@ -42,7 +44,18 @@ def render_markdown(report: ScanReport) -> str:
                 lines.append("**Escalation:**\n")
                 lines.append(_list(f.escalation_actions) + "\n")
     else:
-        lines.append("## Findings\n\nNo issues detected.\n")
+        summary = "No findings from the checks that completed." if report.incomplete else "No issues detected."
+        lines.append(f"## Findings\n\n{summary}\n")
+
+    python_info = report.cuda_env.get("python")
+    interpreter = (python_info.get("executable") if isinstance(python_info, dict) else None) or report.cuda_env.get("python_executable")
+    if interpreter:
+        body = [f"- Interpreter: `{interpreter}`"]
+        if not isinstance(python_info, dict):
+            body.append("- The Python probe did not complete; this environment was not assessed.")
+        elif python_info.get("torch_import_ok") is False:
+            body.append("- PyTorch could not be imported here; its CUDA compatibility was not assessed.")
+        lines.append(_section("Selected Python environment", "\n".join(body)))
 
     # Hardware / OS
     os_body = []
@@ -86,7 +99,7 @@ def render_markdown(report: ScanReport) -> str:
         mem_body = []
         if m.mem_total_kb:
             mem_body.append(f"- MemTotal: {m.mem_total_kb / 1024 / 1024:.1f} GB")
-        if m.mem_available_kb:
+        if m.mem_available_kb is not None:
             mem_body.append(f"- MemAvailable: {m.mem_available_kb / 1024 / 1024:.1f} GB")
         if m.swap_total_kb is not None and m.swap_free_kb is not None:
             used = (m.swap_total_kb - m.swap_free_kb) / 1024 / 1024
@@ -143,7 +156,8 @@ def render_markdown(report: ScanReport) -> str:
             snippet = v if len(v) < 2000 else v[-2000:]
             body.append(f"### {k}\n\n```\n{snippet}\n```")
         if body:
-            lines.append(_section("Recent logs (redacted)", "\n\n".join(body)))
+            title = "Recent logs (redacted)" if report.anonymized else "Recent logs (not redacted)"
+            lines.append(_section(title, "\n\n".join(body)))
 
     # Collector statuses
     errs = [s for s in report.collector_statuses if not s.ok or s.errors]

@@ -2,12 +2,66 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..models import CollectorStatus
 from ..shell import run, which
 
 CDI_DIRS = ("/etc/cdi", "/var/run/cdi")
+
+
+def _local_endpoint(status: CollectorStatus) -> tuple[str | None, dict[str, str]]:
+    env = os.environ.copy()
+    context = env.get("DOCKER_CONTEXT")
+    endpoint = env.get("DOCKER_HOST") if not context else None
+    for key in ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
+        env.pop(key, None)
+    if not context and not endpoint:
+        config_dir = Path(env.get("DOCKER_CONFIG") or Path.home() / ".docker")
+        try:
+            config = json.loads((config_dir / "config.json").read_text())
+            if not isinstance(config, dict):
+                raise ValueError("expected an object")
+            context = config.get("currentContext")
+            if context is not None and not isinstance(context, str):
+                raise ValueError("invalid currentContext")
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError) as exc:
+            status.errors.append(f"docker config: cannot resolve local endpoint ({type(exc).__name__})")
+            return None, env
+    if context and context != "default":
+        # Context inspection reads local metadata; it does not contact the daemon.
+        metadata = run(
+            ["docker", "context", "inspect", context, "--format", "{{json .Endpoints.docker.Host}}"],
+            timeout=5,
+            env=env,
+        )
+        if not metadata.ok:
+            status.errors.append(f"docker context inspect: {metadata.error}: {metadata.stderr.strip()[:200]}")
+            return None, env
+        try:
+            endpoint = json.loads(metadata.stdout)
+            if not isinstance(endpoint, str) or not endpoint:
+                raise ValueError("missing endpoint")
+        except ValueError:
+            status.errors.append("docker context inspect: invalid endpoint metadata")
+            return None, env
+    endpoint = endpoint or "unix:///var/run/docker.sock"
+    try:
+        parsed = urlsplit(endpoint)
+        if (
+            not endpoint.startswith("unix:///") or any(ord(c) < 32 for c in endpoint)
+            or parsed.scheme != "unix" or parsed.netloc or not parsed.path.startswith("/")
+            or parsed.path == "/" or parsed.query or parsed.fragment
+        ):
+            raise ValueError("not a local Unix socket")
+    except ValueError:
+        status.errors.append("docker endpoint skipped: only a local unix:/// socket is allowed; select a local Docker context")
+        return None, env
+    return endpoint, env
 
 
 def _cdi_specs_present() -> bool:
@@ -74,40 +128,63 @@ def collect_docker() -> tuple[dict[str, Any], CollectorStatus]:
             out["cdi_specs_present"] = True
 
     if not out["docker_installed"]:
+        status.ok = False
         status.errors.append("docker not installed")
         _finalize_gpu_readiness(out)
         return out, status
 
-    ver = run(["docker", "version", "--format", "{{json .}}"], timeout=5)
+    endpoint, env = _local_endpoint(status)
+    if endpoint is None:
+        out["daemon_check_skipped"] = True
+        status.ok = False
+        return out, status
+    out["endpoint"] = endpoint
+    command = ["docker", "--host", endpoint]
+
+    ver = run([*command, "version", "--format", "{{json .}}"], timeout=5, env=env)
     if ver.ok:
         out["daemon_reachable"] = True
         out["socket_accessible"] = True
         try:
-            out["version"] = json.loads(ver.stdout)
-        except json.JSONDecodeError:
+            parsed_version = json.loads(ver.stdout)
+            if not isinstance(parsed_version, dict):
+                raise ValueError("expected an object")
+            out["version"] = parsed_version
+        except ValueError:
             out["version_raw"] = ver.stdout.strip()
+            status.errors.append("docker version: unparseable output")
     else:
         status.errors.append(f"docker version: {ver.stderr.strip()[:200] or ver.error}")
 
-    info = run(["docker", "info", "--format", "{{json .}}"], timeout=5)
+    info = run([*command, "info", "--format", "{{json .}}"], timeout=5, env=env)
     if info.ok:
         try:
             d = json.loads(info.stdout)
-            runtimes = list((d.get("Runtimes") or {}).keys())
+            if not isinstance(d, dict) or not isinstance(d.get("Runtimes"), dict):
+                raise ValueError("missing runtimes")
+            out["daemon_reachable"] = True
+            out["socket_accessible"] = True
+            runtimes = list(d["Runtimes"])
             out["runtimes"] = runtimes
             out["nvidia_runtime_available"] = any("nvidia" in r.lower() for r in runtimes)
             out["default_runtime"] = d.get("DefaultRuntime")
             out["server_version"] = d.get("ServerVersion")
-        except json.JSONDecodeError:
-            pass
+        except ValueError:
+            status.errors.append("docker info: unparseable output or missing runtimes")
+    else:
+        status.errors.append(f"docker info: {info.error}: {info.stderr.strip()[:200]}")
 
-    ps = run(["docker", "ps", "--format", "{{json .}}"], timeout=5)
+    ps = run([*command, "ps", "--format", "{{json .}}"], timeout=5, env=env)
     if ps.ok and ps.stdout.strip():
         containers: list[dict[str, Any]] = []
         for line in ps.stdout.strip().splitlines():
             try:
-                containers.append(json.loads(line))
-            except json.JSONDecodeError:
+                container = json.loads(line)
+                if not isinstance(container, dict) or not isinstance(container.get("ID"), str):
+                    raise ValueError("missing container ID")
+                containers.append(container)
+            except ValueError:
+                status.errors.append("docker ps: unparseable container row")
                 continue
         out["containers"] = containers
 
@@ -116,17 +193,26 @@ def collect_docker() -> tuple[dict[str, Any], CollectorStatus]:
             if not cid:
                 continue
             inspect = run(
-                ["docker", "inspect", "--format", "{{json .HostConfig.DeviceRequests}}", cid],
+                [*command, "inspect", "--format", "{{json .HostConfig.DeviceRequests}}", cid],
                 timeout=5,
+                env=env,
             )
-            if inspect.ok and inspect.stdout.strip() not in ("", "null"):
+            if inspect.ok:
                 try:
                     requests = json.loads(inspect.stdout)
-                except json.JSONDecodeError:
+                    if requests is not None and (
+                        not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests)
+                    ):
+                        raise ValueError("invalid device requests")
+                except ValueError:
+                    status.errors.append(f"docker inspect {cid}: unparseable device requests")
                     requests = None
                 if requests:
                     out["gpu_container_running"] = True
-                    break
+            else:
+                status.errors.append(f"docker inspect {cid}: {inspect.error}: {inspect.stderr.strip()[:200]}")
+    elif not ps.ok:
+        status.errors.append(f"docker ps: {ps.error}: {ps.stderr.strip()[:200]}")
 
     _finalize_gpu_readiness(out)
 
