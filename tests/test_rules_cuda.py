@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from spark_doctor.collectors.cuda_env import (
     parse_ldconfig_libcudart,
     parse_nvcc_release,
@@ -47,6 +49,79 @@ def test_healthy_cuda13_env_no_findings():
 
 def test_missing_cuda_env_stays_silent():
     assert _cuda_findings(_load("healthy_minimal.json")) == {}
+
+
+def test_cpu_only_torch_in_selected_python_warns_without_blaming_containers() -> None:
+    report = _load("cuda_torch_cpu_only.json")
+    findings = _cuda_findings(report)
+
+    assert set(findings) == {"cuda.torch_cpu_only"}
+    finding = findings["cuda.torch_cpu_only"]
+    assert finding.severity == "warning"
+    assert finding.confidence == "high"
+    assert "/usr/bin/python3" in " ".join(finding.evidence)
+    assert "2.13.0+cpu" in " ".join(finding.evidence)
+    assert "selected Python environment" in finding.explanation
+    assert "container" in finding.explanation
+    actions = " ".join(finding.recommended_actions)
+    assert "--python" in actions
+    assert "intentional" in actions
+
+
+@pytest.mark.parametrize("version", ["2.13.0+cpu", "2.13.0a0+cpu.nightly"])
+def test_explicit_cpu_build_tag_triggers_warning(version: str) -> None:
+    report = _load("cuda_torch_cpu_only.json")
+    report.cuda_env["python"]["torch_version"] = version
+    assert "cuda.torch_cpu_only" in _cuda_findings(report)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("torch_import_ok", False),
+        ("torch_import_ok", None),
+        ("torch_import_ok", 1),
+        ("torch_cuda_version", "13.0"),
+        ("torch_cuda_version", ""),
+        ("torch_cuda_available", True),
+        ("torch_cuda_available", None),
+        ("torch_cuda_available", 0),
+        ("torch_version", "2.13.0"),
+        ("torch_version", "2.13.0+rocm7.0"),
+        ("torch_version", "2.13.0+cu130"),
+        ("torch_version", "2.13.0+cpuish"),
+        ("torch_version", None),
+    ],
+)
+def test_cpu_only_torch_requires_explicit_consistent_build_evidence(field: str, value: object) -> None:
+    report = _load("cuda_torch_cpu_only.json")
+    report.cuda_env["python"][field] = value
+    assert "cuda.torch_cpu_only" not in _cuda_findings(report)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["torch_import_ok", "torch_cuda_version", "torch_cuda_available", "torch_version"],
+)
+def test_cpu_only_torch_does_not_infer_from_missing_probe_fields(field: str) -> None:
+    report = _load("cuda_torch_cpu_only.json")
+    del report.cuda_env["python"][field]
+    assert "cuda.torch_cpu_only" not in _cuda_findings(report)
+
+
+def test_cpu_only_torch_uses_requested_interpreter_when_resolved_path_is_missing() -> None:
+    report = _load("cuda_torch_cpu_only.json")
+    del report.cuda_env["python"]["executable"]
+    report.cuda_env["python_executable"] = "/opt/workload/bin/python"
+    finding = _cuda_findings(report)["cuda.torch_cpu_only"]
+    assert "/opt/workload/bin/python" in " ".join(finding.evidence)
+
+
+def test_unavailable_cuda_device_does_not_imply_cpu_only_torch() -> None:
+    report = _load("cuda_env_healthy.json")
+    report.cuda_env["python"]["torch_cuda_available"] = False
+    report.cuda_env["python"]["torch_arch_list"] = []
+    assert "cuda.torch_cpu_only" not in _cuda_findings(report)
 
 
 def test_parse_smi_cuda_version():

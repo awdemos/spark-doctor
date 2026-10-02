@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from types import SimpleNamespace
 from typing import Any, Iterator
 
 import pytest
 
-from spark_doctor.collectors import cuda_env, gpu, logs, memory, network, os_info, processes
+from spark_doctor.collectors import cuda_env, firmware, gpu, logs, memory, network, os_info, processes
 from spark_doctor.models import ScanReport
 from spark_doctor.privacy import redact_report
 from spark_doctor.shell import ShellResult
@@ -15,6 +16,55 @@ from spark_doctor.shell import ShellResult
 
 def result(stdout: str = "", *, error: str | None = None) -> ShellResult:
     return ShellResult("probe", error is None, 1 if error else 0, stdout, "", error)
+
+
+@pytest.mark.parametrize("use_sudo", [False, True])
+@pytest.mark.parametrize("error", [
+    None, "command_not_found", "nonzero_exit", "timeout", "exception:PermissionError:denied",
+])
+def test_firmware_probes_use_private_c_locale_and_preserve_failures(
+    monkeypatch: pytest.MonkeyPatch, use_sudo: bool, error: str | None,
+) -> None:
+    monkeypatch.setenv("LANG", "de_DE.UTF-8")
+    monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
+    monkeypatch.setenv("LANGUAGE", "de:en")
+    monkeypatch.setenv("PATH", "/test/workload/bin:/usr/bin")
+    monkeypatch.setenv("SPARK_DOCTOR_TEST_KEEP", "unchanged")
+    original_environment = dict(os.environ)
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def run(args: list[str], **kwargs: Any) -> ShellResult:
+        calls.append((args, kwargs))
+        return result("" if error else "probe output", error=error)
+
+    monkeypatch.setattr(firmware, "run", run)
+    data, status = firmware.collect_firmware(use_sudo=use_sudo)
+    assert [args[0] for args, _ in calls] == (["sudo"] if use_sudo else []) + ["fwupdmgr", "mokutil"]
+    expected_environment = {**original_environment, "LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"}
+    for _, kwargs in calls:
+        assert isinstance(kwargs.get("env"), dict)
+        # Keep inherited credentials out of pytest assertion diffs.
+        assert bool(kwargs["env"] == expected_environment)
+        assert kwargs["env"] is not os.environ
+    assert bool(dict(os.environ) == original_environment)
+    if error:
+        assert not data and not status.ok
+        assert len(status.errors) == len(calls)
+        assert all(error in message for message in status.errors)
+    else:
+        assert set(data) == {"fwupdmgr", "secure_boot"} | ({"dmidecode"} if use_sudo else set())
+        assert status.ok and not status.errors
+
+
+def test_firmware_locale_keeps_partial_success_after_failed_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(args: list[str], **kwargs: Any) -> ShellResult:
+        return result(error="timeout") if args[0] == "fwupdmgr" else result("probe output")
+
+    monkeypatch.setattr(firmware, "run", run)
+    data, status = firmware.collect_firmware(use_sudo=True)
+    assert set(data) == {"dmidecode", "secure_boot"}
+    assert status.errors == ["fwupdmgr: timeout"]
+    assert ScanReport(firmware=data, collector_statuses=[status]).incomplete
 
 
 @pytest.mark.parametrize("error", ["command_not_found", "nonzero_exit", "timeout"])

@@ -42,6 +42,8 @@ Exit codes for `scan` and `doctor`: `0` clean · `1` warning · `2` critical · 
 
 CUDA/package checks inspect `python3` on PATH unless you select a workload interpreter with `--python`. Reports identify the selected environment; a scan does not inspect other virtual environments or container Python installations automatically. If PyTorch cannot be imported there, its CUDA compatibility has not been assessed.
 
+An explicitly CPU-tagged PyTorch build with no CUDA support produces a warning for the selected interpreter. This does not establish whether a separate GPU container or another environment is working; an intentionally CPU-only host environment can ignore the warning.
+
 ## What it detects
 
 | ID | Detects |
@@ -59,6 +61,7 @@ CUDA/package checks inspect `python3` on PATH unless you select a workload inter
 | `network.nic_link_below_1g` | An active interface with a known link speed below 1 Gb/s. |
 | `backend.nemotron_v3_discards_primed_reasoning` | A vLLM 0.22.1 environment and a process using the `nemotron_v3` reasoning parser; prompt priming still needs manual verification. |
 | `cuda.aarch64_prebuilt_wheel_gap` | Optional flash-attn or bitsandbytes imports fail or report a CPU-only build on aarch64 + GB10. |
+| `cuda.torch_cpu_only` | The selected Python successfully imports an explicitly CPU-tagged PyTorch build with no CUDA support. |
 
 Recipe validator checks tensor-parallel vs GPU count, container image registry, arm64 compatibility, memory budget, and aggressive `gpu_memory_utilization` / context lengths.
 
@@ -75,14 +78,15 @@ Docker collection recognizes named NVIDIA runtimes, runtime hooks, and CDI evide
 Reports are anonymized by default:
 
 - Locally detected hostname/username and recognized home paths replaced; imported hostnames are inferred from `uname` when available.
-- Private IPv4 and MAC addresses redacted unless `--include-network-identifiers`.
+- Private IPv4, IPv6 (including global, link-local, and scoped addresses), and MAC addresses redacted unless `--include-network-identifiers`.
+- Hardware serial/UUID fields, English firmware serial-number/UUID lines, and NVIDIA GPU UUIDs redacted. Firmware probes use a per-process C locale for stable labels without changing system settings. Firmware model GUIDs and version numbers are preserved. `--include-network-identifiers` does not expose hardware identifiers; only `--include-sensitive-data` bypasses this protection on scans and exports.
 - HF, NGC, OpenAI, bearer, JWT, and SSH-key patterns redacted.
 - Credentials in process arguments (including `--api-key VALUE`) and structured secret fields redacted.
 - Logs (`dmesg`, `journalctl`) only included with `--include-logs`.
 
 `doctor` and `report` reapply redaction to imported scans by default. `--include-network-identifiers` keeps network identifiers; `--include-sensitive-data` explicitly keeps raw data, including credentials, and replaces the old `scan --no-anonymize` option. Review any report before sharing: automatic redaction cannot recognize every possible secret.
 
-Imported raw logs may still contain bare source usernames when the source identity is unknown. Review those logs before sharing.
+Imported raw logs may still contain bare source usernames when the source identity is unknown, and older firmware captures with translated labels may retain identifiers. Review those captures before sharing.
 
 ## Safety
 

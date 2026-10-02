@@ -1,0 +1,24 @@
+{
+  "schema_version": "0.1",
+  "created_at": "2026-10-02T09:00:00",
+  "spark_doctor_version": "0.1.0",
+  "anonymized": true,
+  "os": {"arch": "aarch64"},
+  "gpu": {"available": true, "gpu_count": 1, "name": "NVIDIA GB10"},
+  "cuda_env": {
+    "python_executable": "/usr/bin/python3",
+    "driver_cuda_version": "13.0",
+    "python": {
+      "python_version": "3.12.3",
+      "executable": "/usr/bin/python3",
+      "packages": {"torch": "2.13.0+cpu"},
+      "torch_import_ok": true,
+      "torch_version": "2.13.0+cpu",
+      "torch_cuda_version": null,
+      "torch_cuda_available": false,
+      "torch_arch_list": []
+    }
+  },
+  "collector_statuses": [],
+  "findings": []
+}

@@ -215,3 +215,106 @@ def test_imported_report_redacts_source_home_and_uname_hostname(monkeypatch):
     with_network = redact_report(report, include_network_identifiers=True)
     assert "192.168.1.42" in with_network.reproduction_notes
     assert "private-value" not in with_network.model_dump_json()
+
+
+@pytest.mark.parametrize("address", [
+    "2001:db8:85a3::8a2e:370:7334", "2001:DB8:0:0:1:2:3:4", "fd12:3456::1",
+    "fe80::1234:5678:abcd:ef01", "::1", "::", "::ffff:192.168.1.42",
+    "::ffff:203.0.113.42", "fe80::1%eth0", "fe80::1%7", "fe80::1%25en0",
+])
+@pytest.mark.parametrize("template", [
+    "eth0 UP {}/64", "http://[{}]:8000/v1", "peer:{}.", "Connection to {}: failed",
+])
+def test_redacts_ipv6_in_network_output_and_embedded_addresses(address: str, template: str) -> None:
+    text = template.format(address)
+    result = redact_text(text, identifiers=IDS)
+    assert result == template.format("<redacted:ipv6>")
+    assert redact_text(result, identifiers=IDS) == result
+    assert redact_text(text, include_network_identifiers=True, identifiers=IDS) == text
+
+
+@pytest.mark.parametrize("text", [
+    "time=12:34:56", "PCI 0000:01:00.0", "cuda::device", "version 1.2.3",
+    "invalid 2001:db8:12345::zzzz", "GPU temperature: 70", "aa:bb:cc:dd:ee:ff",
+])
+def test_ipv6_redaction_does_not_damage_non_addresses(text: str) -> None:
+    expected = "<redacted:mac>" if text == "aa:bb:cc:dd:ee:ff" else text
+    assert redact_text(text, identifiers=IDS) == expected
+
+
+@pytest.mark.parametrize("address", [
+    "2001:db8::5", "2001:db8:1:2:3:4:5:6", "::ffff:203.0.113.42",
+])
+@pytest.mark.parametrize("template", [
+    "INFO {}:51234 - GET /v1/models", "peer {}:51234: failed", "IP6.ADDRESS[1]:{}",
+    "IP6.ADDRESS[1]:{}:51234", "IP6.ADDRESS[1]:{}:51234: failed",
+])
+def test_redacts_ipv6_next_to_ports_and_label_separators(address: str, template: str) -> None:
+    text = template.format(address)
+    result = redact_text(text, identifiers=IDS)
+    assert result == template.format("<redacted:ipv6>")
+    assert redact_text(result, identifiers=IDS) == result
+    assert redact_text(text, include_network_identifiers=True, identifiers=IDS) == text
+
+
+def test_redacts_full_ipv6_address_with_short_unbracketed_port() -> None:
+    text = "peer 2001:db8:1:2:3:4:5:6:22"
+    assert redact_text(text, identifiers=IDS) == "peer <redacted:ipv6>:22"
+
+
+@pytest.mark.parametrize("label", ["Serial Number", "Serial", "serial_number", "UUID"])
+@pytest.mark.parametrize("prefix", ["\t", "│ │     ", "├─ ", "? ?   ", "?     "])
+def test_redacts_firmware_identifier_lines_without_losing_other_fields(label: str, prefix: str) -> None:
+    text = f"{prefix}{label}: TEST-SERIAL-1234\n{prefix}Current version: 1.2.3\n"
+    result = redact_text(text, include_network_identifiers=True, identifiers=IDS)
+    assert result == f"{prefix}{label}: <redacted:hardware_id>\n{prefix}Current version: 1.2.3\n"
+    assert redact_text(result, identifiers=IDS) == result
+
+
+def test_missing_firmware_serial_does_not_consume_next_line() -> None:
+    text = "Serial Number:   \nCurrent version: 1.2.3\n"
+    assert redact_text(text, identifiers=IDS) == text
+
+
+def test_malformed_ipv6_candidate_does_not_stall_redaction() -> None:
+    code = "from spark_doctor.privacy import redact_text; import sys; redact_text(sys.stdin.read())"
+    subprocess.run(
+        [sys.executable, "-c", code], input="a:" * 10_000 + "G",
+        text=True, capture_output=True, timeout=3, check=True,
+    )
+
+
+@pytest.mark.parametrize("prefix", ["GPU-", "MIG-", "MIG-GPU-"])
+def test_redacts_gpu_uuid_in_free_text_but_preserves_firmware_model_guid(prefix: str) -> None:
+    uuid = "00000000-1111-2222-3333-444444444444"
+    text = f"selected {prefix}{uuid}; GUID: {uuid}"
+    result = redact_text(text, include_network_identifiers=True, identifiers=IDS)
+    assert result == f"selected <redacted:hardware_id>; GUID: {uuid}"
+    assert redact_text(result, identifiers=IDS) == result
+
+
+@pytest.mark.parametrize("key", ["uuid", "gpu_uuid", "Serial Number", "serial_number", "serial", "SerialNumber"])
+def test_redacts_structured_hardware_identifiers(key: str) -> None:
+    original = {key: "TEST-SERIAL-1234", "empty": {key: None}, "version": "1.2.3"}
+    redacted = redact_obj(original, include_network_identifiers=True, identifiers=IDS)
+    assert redacted == {key: "<redacted:hardware_id>", "empty": {key: None}, "version": "1.2.3"}
+    assert redact_obj(redacted, identifiers=IDS) == redacted
+    assert original[key] == "TEST-SERIAL-1234"
+
+
+def test_default_report_masks_real_collector_identifier_shapes() -> None:
+    uuid = "GPU-00000000-1111-2222-3333-444444444444"
+    report = ScanReport(
+        gpu={"gpus": [{"uuid": uuid, "name": "NVIDIA GB10"}]},
+        firmware={"fwupdmgr": "│ │ Serial Number: TEST-SERIAL-1234\n│ │ Current version: 1.2.3"},
+        network={"ip_br_addr": "eth0 UP 2001:db8::1/64 fe80::1%eth0/64"},
+    )
+    result = redact_report(report)
+    serialized = result.model_dump_json()
+    assert all(identifier not in serialized for identifier in (uuid, "TEST-SERIAL-1234", "2001:db8::1", "fe80::1"))
+    assert result.gpu["gpus"][0]["name"] == "NVIDIA GB10"
+    assert "1.2.3" in result.firmware["fwupdmgr"]
+    assert redact_report(result).model_dump() == result.model_dump()
+    with_network = redact_report(report, include_network_identifiers=True).model_dump_json()
+    assert "2001:db8::1" in with_network and "fe80::1%eth0" in with_network
+    assert uuid not in with_network and "TEST-SERIAL-1234" not in with_network

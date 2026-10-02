@@ -145,7 +145,7 @@ def scan(
     use_sudo: bool = typer.Option(False, "--sudo", help="Allow sudo for firmware collection."),
     include_sensitive_data: bool = typer.Option(False, "--include-sensitive-data", help="Keep raw identifiers and credentials in outputs."),
     include_network_identifiers: bool = typer.Option(
-        False, "--include-network-identifiers", help="Keep private IPs and MACs in report."
+        False, "--include-network-identifiers", help="Keep private IPv4, IPv6, and MAC addresses in report; hardware identifiers stay redacted."
     ),
     save: bool = typer.Option(True, "--save/--no-save", help="Save scan under .spark-doctor/reports/."),
 ) -> None:

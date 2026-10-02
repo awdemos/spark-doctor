@@ -50,6 +50,52 @@ def _needs_cuda13(report: ScanReport) -> bool:
     return _is_gb10(report)
 
 
+def _eval_torch_cpu_only(report: ScanReport) -> list[Finding]:
+    py = _python_info(report)
+    version = py.get("torch_version")
+    if py.get("torch_import_ok") is not True or not isinstance(version, str):
+        return []
+    # A null CUDA version alone can also describe a ROCm or other non-CUDA build.
+    if "cpu" not in version.partition("+")[2].lower().split("."):
+        return []
+    if "torch_cuda_version" not in py or py["torch_cuda_version"] is not None:
+        return []
+    if py.get("torch_cuda_available") is not False:
+        return []
+
+    executable = py.get("executable") or _cuda_env(report).get("python_executable")
+    evidence = [
+        f"torch {version} imported successfully and is tagged as a CPU-only build",
+        "torch.version.cuda is None; torch.cuda.is_available() is False",
+    ]
+    if executable:
+        evidence.insert(0, f"Inspected Python: {executable}")
+
+    return [
+        Finding(
+            rule_id="cuda.torch_cpu_only",
+            title="Selected Python has a CPU-only PyTorch build",
+            severity="warning",
+            confidence="high",
+            evidence=evidence,
+            explanation=(
+                "PyTorch in the selected Python environment was built without CUDA support, "
+                "so it cannot use the NVIDIA GPU. This finding applies only to the inspected "
+                "interpreter; it does not establish whether a separate GPU container or "
+                "another Python environment is working."
+            ),
+            recommended_actions=[
+                "Confirm which Python environment runs your workload. Re-run spark-doctor "
+                "scan --python /path/to/workload/python to inspect that interpreter.",
+                "If this environment is intended for GPU work, choose a PyTorch build that "
+                "supports CUDA and your hardware, then re-scan the same interpreter.",
+                "If the inspected environment is intentionally CPU-only and GPU work runs "
+                "elsewhere, this warning can be ignored; check that workload separately.",
+            ],
+        )
+    ]
+
+
 def _eval_torch_cu12(report: ScanReport) -> list[Finding]:
     py = _python_info(report)
     if not py.get("torch_import_ok"):
@@ -203,4 +249,10 @@ rule_cuda_env_mismatch = Rule(
     id="cuda.env_mismatch",
     title="CUDA 13 / SM_121 environment mismatches",
     fn=_evaluate,
+)
+
+rule_torch_cpu_only = Rule(
+    id="cuda.torch_cpu_only",
+    title="CPU-only PyTorch in the selected Python environment",
+    fn=_eval_torch_cpu_only,
 )

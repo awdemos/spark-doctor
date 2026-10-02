@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import getpass
+import ipaddress
 import os
 import re
 import socket
+from collections.abc import Callable
 from typing import Any
 
 from ..models import ScanReport
 
 
-REDACTION_RE = re.compile(r"(<redacted:[a-z_]+>)")
+REDACTION_RE = re.compile(r"(<redacted:[a-z0-9_]+>)")
 SECRET_NAMES = (
     r"(?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|password|secret|token|(?:access|auth|hf)[_-]token|"
     r"(?:openai|ngc)[_-]api[_-]?key|client[_-]secret|aws[_-]secret[_-]access[_-]key)"
@@ -53,14 +55,55 @@ PRIVATE_IP_RE = re.compile(
 )
 
 MAC_RE = re.compile(r"\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b")
+IPV6_CANDIDATE_RE = re.compile(
+    r"(?<!\w)[0-9A-Fa-f:.]+(?:%[A-Za-z0-9_.~-]+)?"
+)
+HARDWARE_KEY_RE = re.compile(r"(?:serial(?:[ _-]*number)?|(?:gpu[ _-]*)?uuid)", re.IGNORECASE)
+HARDWARE_LINE_RE = re.compile(
+    r"^([ \t|+`?\-\u2500-\u257f]*(?:serial(?:[ _-]*number)?|uuid)[ \t]*:[ \t]*)[^ \t\r\n][^\r\n]*",
+    re.IGNORECASE | re.MULTILINE,
+)
+GPU_UUID_RE = re.compile(
+    r"\b(?:MIG-)?(?:GPU-|MIG-)[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
 
 
-def _replace_unredacted(text: str, pattern: re.Pattern[str], replacement: str) -> str:
+def _replace_unredacted(
+    text: str, pattern: re.Pattern[str], replacement: str | Callable[[re.Match[str]], str],
+) -> str:
     # Redaction runs again at export; existing placeholders must survive unchanged.
     return "".join(
         part if index % 2 else pattern.sub(replacement, part)
         for index, part in enumerate(REDACTION_RE.split(text))
     )
+
+
+def _redact_ipv6(match: re.Match[str]) -> str:
+    candidate = match.group().rstrip(".")
+    if ":" not in candidate:
+        return match.group()
+    # Validate the boundary here so malformed long tokens cannot force regex backtracking.
+    following = match.string[match.end():match.end() + 1]
+    if following and (following.isalnum() or following == "_"):
+        return match.group()
+    # Try the complete address first; colons can also be label separators, ports, or prose.
+    starts = (0, 1) if candidate.startswith(":") else (0,)
+    ends = (len(candidate), len(candidate) - 1) if candidate.endswith(":") else (len(candidate),)
+    for start in starts:
+        for end in ends:
+            address = candidate[start:end]
+            _, separator, port = address.rpartition(":")
+            host_ends = [end]
+            if separator and port.isdecimal() and len(port) <= 5 and int(port) <= 65535:
+                host_ends.append(end - len(port) - 1)
+            for host_end in host_ends:
+                try:
+                    ipaddress.IPv6Address(candidate[start:host_end])
+                except ValueError:
+                    continue
+                return match.group()[:start] + "<redacted:ipv6>" + match.group()[host_end:]
+    return match.group()
 
 
 def _redact_secret(match: re.Match[str]) -> str:
@@ -98,6 +141,8 @@ def redact_text(
     text = SECRET_RE.sub(_redact_secret, text)
     for pattern, replacement in TOKEN_PATTERNS:
         text = _replace_unredacted(text, pattern, replacement)
+    text = _replace_unredacted(text, HARDWARE_LINE_RE, r"\1<redacted:hardware_id>")
+    text = _replace_unredacted(text, GPU_UUID_RE, "<redacted:hardware_id>")
 
     home = ids.get("home")
     if home and home not in ("/", ""):
@@ -111,6 +156,8 @@ def redact_text(
             text = _replace_unredacted(text, re.compile(rf"\b{re.escape(host)}\b"), "<redacted:host>")
 
     if not include_network_identifiers:
+        # IPv4-mapped and expanded IPv6 addresses overlap the IPv4/MAC patterns.
+        text = _replace_unredacted(text, IPV6_CANDIDATE_RE, _redact_ipv6)
         text = _replace_unredacted(text, PRIVATE_IP_RE, "<redacted:private_ip>")
         text = _replace_unredacted(text, MAC_RE, "<redacted:mac>")
 
@@ -146,6 +193,8 @@ def redact_obj(
             k: (
                 "<redacted:secret>"
                 if isinstance(k, str) and SECRET_KEY_RE.fullmatch(k) and v is not None
+                else "<redacted:hardware_id>"
+                if isinstance(k, str) and HARDWARE_KEY_RE.fullmatch(k) and v is not None
                 else redact_obj(v, include_network_identifiers=include_network_identifiers, identifiers=identifiers)
             )
             for k, v in obj.items()

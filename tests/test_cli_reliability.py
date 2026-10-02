@@ -196,3 +196,65 @@ def test_failed_python_probe_still_shows_selected_interpreter(
     assert result.exit_code == 3
     assert "/missing/python" in result.stdout
     assert "was not assessed" in result.stdout
+
+
+def test_cpu_only_torch_doctor_exits_warning() -> None:
+    result = runner.invoke(cli.app, [
+        "doctor", "--from", str(Path(__file__).parent / "fixtures" / "cuda_torch_cpu_only.json"),
+    ])
+    assert result.exit_code == 1
+    assert "CPU-only PyTorch" in result.stdout
+    assert "separate GPU container" in result.stdout
+
+
+@pytest.mark.parametrize("flags,keep_network,keep_hardware", [
+    ([], False, False), (["--include-network-identifiers"], True, False),
+    (["--include-sensitive-data"], True, True),
+])
+def test_scan_identifier_privacy_flags_are_independent(
+    collectors: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    flags: list[str], keep_network: bool, keep_hardware: bool,
+) -> None:
+    address = "2001:db8::1"
+    serial = "TEST-SERIAL-1234"
+    uuid = "GPU-00000000-1111-2222-3333-444444444444"
+    monkeypatch.setattr(cli, "collect_network", lambda: (
+        {"ip_br_addr": f"eth0 UP {address}/64"}, CollectorStatus(name="network", ok=True),
+    ))
+    monkeypatch.setattr(cli, "collect_firmware", lambda **kw: (
+        {"fwupdmgr": f"│ │ Serial Number: {serial}"}, CollectorStatus(name="firmware", ok=True),
+    ))
+    monkeypatch.setattr(cli, "collect_gpu", lambda **kw: (
+        {"gpus": [{"uuid": uuid}]}, [], CollectorStatus(name="gpu", ok=True),
+    ))
+    path = tmp_path / "scan.json"
+    result = runner.invoke(cli.app, ["scan", "--no-save", "--json", str(path), *flags])
+    assert result.exit_code == 0
+    output = path.read_text()
+    assert (address in output) is keep_network
+    assert (serial in output) is keep_hardware
+    assert (uuid in output) is keep_hardware
+    assert json.loads(output)["anonymized"] is not keep_hardware
+
+
+@pytest.mark.parametrize("format", ["markdown", "forum", "github"])
+@pytest.mark.parametrize("flags,keep_network,keep_hardware", [
+    ([], False, False), (["--include-network-identifiers"], True, False),
+    (["--include-sensitive-data"], True, True),
+])
+def test_imported_report_exports_respect_identifier_privacy_flags(
+    tmp_path: Path, format: str, flags: list[str], keep_network: bool, keep_hardware: bool,
+) -> None:
+    address = "2001:db8::1"
+    serial = "TEST-SERIAL-1234"
+    uuid = "GPU-00000000-1111-2222-3333-444444444444"
+    path = tmp_path / "raw.json"
+    path.write_text(ScanReport(anonymized=False, reproduction_notes=(
+        f"peer {address}: connection refused\npeer {address}:51234\n"
+        f"Serial Number: {serial}\nselected {uuid}"
+    )).model_dump_json())
+    result = runner.invoke(cli.app, ["report", "--from", str(path), "--format", format, *flags])
+    assert result.exit_code == 0
+    assert (address in result.stdout) is keep_network
+    assert (serial in result.stdout) is keep_hardware
+    assert (uuid in result.stdout) is keep_hardware

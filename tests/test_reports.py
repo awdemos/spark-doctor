@@ -1,6 +1,7 @@
 import json
 from io import StringIO
 from pathlib import Path
+from typing import Callable
 
 import pytest
 from rich.console import Console
@@ -46,6 +47,30 @@ def test_markdown_contains_finding_title():
     assert "Spark Doctor Report" in md
     assert "Possible GPU low-power state" in md
     assert "Next steps" in md
+
+
+@pytest.mark.parametrize("render", [render_markdown, render_forum, render_github])
+def test_reports_explain_cpu_only_torch_scope(render: Callable[[ScanReport], str]) -> None:
+    text = render(_load("cuda_torch_cpu_only.json"))
+    assert "Selected Python has a CPU-only PyTorch build" in text
+    assert "cuda.torch_cpu_only" in text
+    assert "selected Python environment" in text
+    assert "separate GPU container" in text
+    assert "--python /path/to/workload/python" in text
+
+
+def test_console_explains_cpu_only_torch_scope() -> None:
+    output = StringIO()
+    render_console(
+        _load("cuda_torch_cpu_only.json"),
+        Console(file=output, width=160, color_system=None),
+    )
+    text = output.getvalue()
+    assert "Overall: Warning" in text
+    assert "Selected Python has a CPU-only PyTorch build" in text
+    assert "selected Python environment" in text
+    assert "separate GPU container" in text
+    assert "/usr/bin/python3" in text
 
 
 def test_forum_contains_title_and_tldr():

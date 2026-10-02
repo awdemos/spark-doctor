@@ -43,7 +43,7 @@ def _lazy_rules() -> list[Rule]:
     from .memory import rule_memory_uma_pressure
     from .runtime import rule_runtime_docker_unhealthy
     from .backend import rule_backend_multiple_heavy_models
-    from .cuda_env import rule_cuda_env_mismatch
+    from .cuda_env import rule_cuda_env_mismatch, rule_torch_cpu_only
     from .kv_cache import rule_backend_kv_cache_oom
     from .network import rule_network_nic_link_below_1g
     from .gb10_local_inference import (
@@ -58,6 +58,7 @@ def _lazy_rules() -> list[Rule]:
         rule_runtime_docker_unhealthy,
         rule_backend_multiple_heavy_models,
         rule_cuda_env_mismatch,
+        rule_torch_cpu_only,
         rule_backend_kv_cache_oom,
         rule_network_nic_link_below_1g,
         rule_gb10_nemotron_v3_parser,
