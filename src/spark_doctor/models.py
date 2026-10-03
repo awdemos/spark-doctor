@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+
+PressureValue = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 class MetricSample(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     timestamp: datetime | None = None
     gpu_utilization_percent: float | None = None
     gpu_power_draw_watts: float | None = None
@@ -20,8 +24,8 @@ class MemorySnapshot(BaseModel):
     mem_available_kb: int | None = None
     swap_total_kb: int | None = None
     swap_free_kb: int | None = None
-    psi_memory: dict[str, Any] = Field(default_factory=dict)
-    psi_io: dict[str, Any] = Field(default_factory=dict)
+    psi_memory: dict[str, dict[str, PressureValue]] = Field(default_factory=dict)
+    psi_io: dict[str, dict[str, PressureValue]] = Field(default_factory=dict)
 
 
 class ProcessInfo(BaseModel):
@@ -56,7 +60,7 @@ class Finding(BaseModel):
 class ScanReport(BaseModel):
     schema_version: str = "0.1"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    spark_doctor_version: str = "0.2.0"
+    spark_doctor_version: str = "0.3.0"
     anonymized: bool = True
     os: dict[str, Any] = Field(default_factory=dict)
     firmware: dict[str, Any] = Field(default_factory=dict)
@@ -67,7 +71,31 @@ class ScanReport(BaseModel):
     docker: dict[str, Any] = Field(default_factory=dict)
     network: dict[str, Any] = Field(default_factory=dict)
     processes: list[ProcessInfo] = Field(default_factory=list)
-    logs: dict[str, Any] = Field(default_factory=dict)
+    logs: dict[str, str] = Field(default_factory=dict)
     collector_statuses: list[CollectorStatus] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)
     reproduction_notes: str | None = None
+
+    @field_validator("os", "gpu", "network", "docker")
+    @classmethod
+    def validate_nested_objects(cls, value: dict[str, Any], info: ValidationInfo) -> dict[str, Any]:
+        object_fields = {"os": ("os_release",), "gpu": ("peak",), "network": (), "docker": ()}
+        list_fields = {"os": (), "gpu": ("gpus",), "network": ("interfaces",), "docker": ("containers",)}
+        for key in object_fields[info.field_name]:
+            if value.get(key) is not None and not isinstance(value[key], dict):
+                raise ValueError(f"{key} must be an object")
+        for key in list_fields[info.field_name]:
+            if value.get(key) is not None and (
+                not isinstance(value[key], list)
+                or not all(isinstance(item, dict) for item in value[key])
+            ):
+                raise ValueError(f"{key} must be a list of objects")
+        if info.field_name == "gpu" and value.get("peak") is not None:
+            value["peak"] = MetricSample.model_validate(value["peak"]).model_dump(exclude_unset=True)
+        return value
+
+    @property
+    def incomplete(self) -> bool:
+        return any(not s.ok or s.errors for s in self.collector_statuses) or any(
+            f.rule_id.startswith("rule.error.") for f in self.findings
+        )

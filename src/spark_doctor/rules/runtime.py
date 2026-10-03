@@ -7,7 +7,7 @@ from .engine import Rule
 def _evaluate(report: ScanReport) -> list[Finding]:
     d = report.docker or {}
     # If no docker data collected at all, skip
-    if not d:
+    if not d or d.get("daemon_check_skipped"):
         return []
 
     problems: list[str] = []

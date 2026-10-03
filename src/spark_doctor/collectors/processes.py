@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shlex
+
 from ..models import CollectorStatus, ProcessInfo
 
 BACKEND_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
@@ -35,18 +37,32 @@ def collect_processes(limit: int = 50) -> tuple[list[ProcessInfo], CollectorStat
         return out, status
 
     procs: list[tuple[int, dict]] = []
-    for p in psutil.process_iter(["pid", "name", "cmdline", "memory_info", "cpu_percent", "memory_percent"]):
-        try:
-            info = p.info
-            rss = info["memory_info"].rss if info.get("memory_info") else None
-            procs.append((rss or 0, info))
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
+    denied = 0
+    unavailable = object()
+    try:
+        for p in psutil.process_iter(
+            ["pid", "name", "cmdline", "memory_info", "cpu_percent", "memory_percent"],
+            ad_value=unavailable,
+        ):
+            try:
+                if any(value is unavailable for value in p.info.values()):
+                    denied += 1
+                info = {key: None if value is unavailable else value for key, value in p.info.items()}
+                rss = info["memory_info"].rss if info.get("memory_info") else None
+                procs.append((rss or 0, info))
+            except psutil.NoSuchProcess:
+                continue
+            except psutil.AccessDenied:
+                denied += 1
+    except (psutil.Error, OSError) as exc:
+        status.errors.append(f"process enumeration: {type(exc).__name__}")
+    if denied:
+        status.errors.append(f"process enumeration: attributes unavailable for {denied} processes (access denied or exited)")
 
     procs.sort(key=lambda x: x[0], reverse=True)
     for rss, info in procs[:limit]:
         cmdline = info.get("cmdline") or []
-        args_str = " ".join(cmdline)
+        args_str = shlex.join(cmdline)
         name = info.get("name") or (cmdline[0] if cmdline else "")
         backend = _detect_backend(name, args_str)
         out.append(
@@ -60,4 +76,5 @@ def collect_processes(limit: int = 50) -> tuple[list[ProcessInfo], CollectorStat
                 detected_backend=backend,
             )
         )
+    status.ok = bool(out) or not status.errors
     return out, status

@@ -1,8 +1,12 @@
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from spark_doctor.models import ScanReport
+import pytest
+
+from spark_doctor.models import MetricSample, ScanReport
 from spark_doctor.rules import run_rules
+from spark_doctor.rules.power import rule_power_low_draw_under_load
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -32,3 +36,71 @@ def test_thermal_fixture_triggers_critical():
     thermal = [f for f in findings if f.rule_id == "thermal.shutdown_risk"]
     assert thermal, "expected thermal.shutdown_risk finding"
     assert thermal[0].severity == "critical"
+
+
+def _low_sample(timestamp: datetime | None = None) -> MetricSample:
+    return MetricSample(
+        timestamp=timestamp,
+        gpu_utilization_percent=95,
+        gpu_power_draw_watts=14,
+        gpu_clock_mhz=611,
+    )
+
+
+@pytest.mark.parametrize(
+    "break_sample",
+    [
+        MetricSample(gpu_utilization_percent=95, gpu_power_draw_watts=80, gpu_clock_mhz=1500),
+        MetricSample(gpu_utilization_percent=10, gpu_power_draw_watts=14, gpu_clock_mhz=611),
+        MetricSample(),
+    ],
+)
+def test_interrupted_low_power_is_warning_with_resampling_advice(break_sample: MetricSample) -> None:
+    report = ScanReport(gpu_samples=[_low_sample(), _low_sample(), break_sample, _low_sample()])
+    finding = rule_power_low_draw_under_load.fn(report)[0]
+    assert finding.severity == "warning"
+    assert finding.confidence == "low"
+    advice = " ".join(finding.recommended_actions).lower()
+    assert "sample" in advice and "load" in advice
+    assert "unplug" not in advice and "shut down" not in advice
+    assert "cause" in finding.explanation.lower()
+
+
+def test_three_legacy_consecutive_samples_remain_critical() -> None:
+    report = ScanReport(gpu_samples=[_low_sample(), _low_sample(), _low_sample()])
+    finding = rule_power_low_draw_under_load.fn(report)[0]
+    assert finding.severity == "critical"
+
+
+@pytest.mark.parametrize("seconds", [(0, 1, 60), (0, 0, 0), (2, 1, 0)])
+def test_gaps_or_non_increasing_timestamps_cannot_establish_persistence(seconds: tuple[int, ...]) -> None:
+    start = datetime(2026, 4, 24, tzinfo=timezone.utc)
+    report = ScanReport(gpu_samples=[_low_sample(start + timedelta(seconds=s)) for s in seconds])
+    finding = rule_power_low_draw_under_load.fn(report)[0]
+    assert finding.severity == "warning"
+    assert finding.confidence == "low"
+
+
+def test_mixed_timestamp_awareness_does_not_raise_or_claim_persistence() -> None:
+    start = datetime(2026, 4, 24)
+    report = ScanReport(
+        gpu_samples=[
+            _low_sample(start),
+            _low_sample((start + timedelta(seconds=1)).replace(tzinfo=timezone.utc)),
+            _low_sample(start + timedelta(seconds=2)),
+        ]
+    )
+    assert rule_power_low_draw_under_load.fn(report)[0].severity == "warning"
+
+
+def test_sustained_evidence_comes_from_consecutive_run() -> None:
+    isolated = _low_sample()
+    isolated.gpu_utilization_percent = 81
+    report = ScanReport(
+        gpu_samples=[isolated, MetricSample(), _low_sample(), _low_sample(), _low_sample()]
+    )
+    finding = rule_power_low_draw_under_load.fn(report)[0]
+    assert finding.severity == "critical"
+    assert finding.confidence == "high"
+    assert not any("81%" in line for line in finding.evidence)
+    assert any("3 consecutive" in line for line in finding.evidence)

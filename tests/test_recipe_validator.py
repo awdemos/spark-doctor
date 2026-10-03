@@ -1,7 +1,9 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+from spark_doctor.recipes.schema import Recipe
 from spark_doctor.recipes.validator import _looks_moe, load_recipe, validate_recipe
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -129,3 +131,80 @@ def test_explicit_dense_model_overrides_name_heuristic() -> None:
     recipe.model = "example/some-moe-model"
     recipe.is_moe = False
     assert "recipe.mxfp4_moe_on_blackwell" not in _ids(validate_recipe(recipe))
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("hardware", "nodes", 0),
+        ("hardware", "nodes", -1),
+        ("hardware", "gpus_per_node", 0),
+        ("hardware", "gpus_per_node", -1),
+        ("runtime", "tensor_parallel_size", 0),
+        ("runtime", "tensor_parallel_size", -1),
+        ("runtime", "max_model_len", 0),
+        ("runtime", "max_model_len", -1),
+        ("runtime", "gpu_memory_utilization", 0),
+        ("runtime", "gpu_memory_utilization", -0.5),
+        ("runtime", "gpu_memory_utilization", 1.01),
+        ("runtime", "gpu_memory_utilization", float("nan")),
+        ("runtime", "gpu_memory_utilization", float("inf")),
+        ("expectations", "min_mem_available_gb_before_start", -1),
+        ("expectations", "min_mem_available_gb_before_start", float("nan")),
+        ("expectations", "min_mem_available_gb_before_start", float("inf")),
+    ],
+)
+def test_invalid_numeric_settings_rejected(section: str, field: str, value: float) -> None:
+    data = load_recipe(FIXTURES / "recipe_ok.yaml").model_dump()
+    data[section][field] = value
+    with pytest.raises(ValidationError) as exc:
+        Recipe.from_dict(data)
+    assert (section, field) in [error["loc"] for error in exc.value.errors()]
+
+
+@pytest.mark.parametrize("section", [None, "hardware", "runtime", "expectations"])
+def test_unknown_recipe_keys_rejected(section: str | None) -> None:
+    data = load_recipe(FIXTURES / "recipe_ok.yaml").model_dump()
+    target = data if section is None else data[section]
+    target["misspelled_setting"] = 1
+    with pytest.raises(ValidationError) as exc:
+        Recipe.from_dict(data)
+    assert any(error["type"] == "extra_forbidden" for error in exc.value.errors())
+
+
+def test_numeric_boundary_values_accepted() -> None:
+    data = load_recipe(FIXTURES / "recipe_ok.yaml").model_dump()
+    data["runtime"]["gpu_memory_utilization"] = 1
+    data["expectations"]["min_mem_available_gb_before_start"] = 0
+    recipe = Recipe.from_dict(data)
+    assert recipe.runtime.gpu_memory_utilization == 1
+    assert recipe.expectations.min_mem_available_gb_before_start == 0
+
+
+def test_tp_cannot_exceed_declared_multinode_capacity() -> None:
+    recipe = load_recipe(FIXTURES / "recipe_multinode_tp_too_high.yaml")
+    result = validate_recipe(recipe, detected_gpu_count=1)
+    assert result.status == "fail"
+    assert "recipe.tensor_parallel_exceeds_gpu_count" in _ids(result)
+
+
+@pytest.mark.parametrize(
+    ("nodes", "gpus_per_node", "detected_gpus", "tp", "valid"),
+    [
+        (2, 1, 1, 2, True),
+        (2, 2, 2, 4, True),
+        (2, 2, 2, 5, False),
+        (1, 4, 1, 2, False),
+        (1, 1, 2, 2, False),
+        (1, 1, 0, 1, False),
+    ],
+)
+def test_tensor_parallel_uses_declared_topology_and_local_single_node_limit(
+    nodes: int, gpus_per_node: int, detected_gpus: int, tp: int, valid: bool
+) -> None:
+    recipe = load_recipe(FIXTURES / "recipe_ok.yaml")
+    recipe.hardware.nodes = nodes
+    recipe.hardware.gpus_per_node = gpus_per_node
+    recipe.runtime.tensor_parallel_size = tp
+    result = validate_recipe(recipe, detected_gpu_count=detected_gpus)
+    assert ("recipe.tensor_parallel_exceeds_gpu_count" not in _ids(result)) is valid

@@ -84,20 +84,25 @@ def validate_recipe(
 
     # tensor parallel vs gpu count
     tp = recipe.runtime.tensor_parallel_size
-    nodes = recipe.hardware.nodes or 1
-    if tp and tp > detected_gpu_count and nodes <= 1:
+    nodes = recipe.hardware.nodes
+    declared_gpu_count = nodes * recipe.hardware.gpus_per_node
+    # A local scan cannot establish remote-node capacity; multi-node capacity is declared.
+    gpu_capacity = min(declared_gpu_count, detected_gpu_count) if nodes == 1 else declared_gpu_count
+    if tp is not None and tp > gpu_capacity:
         issues.append(
             RecipeIssue(
                 id="recipe.tensor_parallel_exceeds_gpu_count",
                 severity="critical",
-                title="tensor_parallel_size exceeds detected GPU count",
+                title="tensor_parallel_size exceeds GPU capacity",
                 detail=(
-                    f"Detected GPUs: {detected_gpu_count}. "
-                    f"Recipe tensor_parallel_size: {tp}. Nodes: {nodes}."
+                    f"Recipe tensor_parallel_size: {tp}. Declared capacity: {declared_gpu_count} GPUs "
+                    f"({nodes} nodes × {recipe.hardware.gpus_per_node} GPUs per node). "
+                    f"Detected local GPUs: {detected_gpu_count}. "
+                    "Remote GPU counts are not verified by this local scan."
                 ),
                 suggested_fix=(
-                    "Use tensor_parallel_size: 1 for a single Spark, or declare a multi-node "
-                    "configuration with nodes > 1 and the corresponding networking."
+                    f"Use tensor_parallel_size no greater than {gpu_capacity}, or correct "
+                    "hardware.nodes and hardware.gpus_per_node to match your actual topology."
                 ),
             )
         )
