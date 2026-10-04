@@ -58,6 +58,8 @@ An explicitly CPU-tagged PyTorch build with no CUDA support produces a warning f
 | `cuda.sm121_not_in_arch_list` | PyTorch build ships no SM_121 kernels for GB10. |
 | `cuda.nvcc_toolkit_mismatch` | `nvcc` on PATH is older than the driver's CUDA version. |
 | `backend.kv_cache_oom` | vLLM "No available memory for the cache blocks" — CUDA-graph memory squeezed out the KV cache (fix: `--enforce-eager`), a distinct failure from host `memory.uma_pressure`. |
+| `memory.oom_killer` | Kernel OOM killer fired this boot (critical), or a container hit its own memory limit (warning). |
+| `gpu.xid_error` | `NVRM: Xid` GPU errors this boot; driver/hardware-class Xids are critical, application-class ones a warning. |
 | `network.nic_link_below_1g` | An active interface with a known link speed below 1 Gb/s. |
 | `backend.nemotron_v3_discards_primed_reasoning` | A vLLM 0.22.1 environment and a process using the `nemotron_v3` reasoning parser; prompt priming still needs manual verification. |
 | `cuda.aarch64_prebuilt_wheel_gap` | Optional flash-attn or bitsandbytes imports fail or report a CPU-only build on aarch64 + GB10. |

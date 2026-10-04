@@ -47,6 +47,7 @@ def _lazy_rules() -> list[Rule]:
     from .backend import rule_backend_multiple_heavy_models
     from .cuda_env import rule_cuda_env_mismatch, rule_torch_cpu_only
     from .kv_cache import rule_backend_kv_cache_oom
+    from .kernel import rule_gpu_xid_error, rule_memory_oom_killer
     from .network import rule_network_nic_link_below_1g
     from .gb10_local_inference import (
         rule_gb10_aarch64_wheel_gap,
@@ -62,6 +63,8 @@ def _lazy_rules() -> list[Rule]:
         rule_cuda_env_mismatch,
         rule_torch_cpu_only,
         rule_backend_kv_cache_oom,
+        rule_memory_oom_killer,
+        rule_gpu_xid_error,
         rule_network_nic_link_below_1g,
         rule_gb10_nemotron_v3_parser,
         rule_gb10_aarch64_wheel_gap,
