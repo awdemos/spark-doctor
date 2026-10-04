@@ -5,6 +5,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
+from . import __version__
+
 PressureValue = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
@@ -42,6 +44,9 @@ class CollectorStatus(BaseModel):
     name: str
     ok: bool
     errors: list[str] = Field(default_factory=list)
+    # Optional collectors feed rules opportunistically; their failures are reported but
+    # do not make the scan incomplete.
+    optional: bool = False
 
 
 class Finding(BaseModel):
@@ -60,7 +65,7 @@ class Finding(BaseModel):
 class ScanReport(BaseModel):
     schema_version: str = "0.1"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    spark_doctor_version: str = "0.3.0"
+    spark_doctor_version: str = __version__
     anonymized: bool = True
     os: dict[str, Any] = Field(default_factory=dict)
     firmware: dict[str, Any] = Field(default_factory=dict)
@@ -96,6 +101,6 @@ class ScanReport(BaseModel):
 
     @property
     def incomplete(self) -> bool:
-        return any(not s.ok or s.errors for s in self.collector_statuses) or any(
+        return any((not s.ok or s.errors) and not s.optional for s in self.collector_statuses) or any(
             f.rule_id.startswith("rule.error.") for f in self.findings
         )

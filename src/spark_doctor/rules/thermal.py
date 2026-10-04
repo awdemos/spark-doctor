@@ -7,13 +7,8 @@ THERMAL_LOG_KEYWORDS = ("thermal shutdown", "over temperature", "overheat", "the
 
 
 def _evaluate(report: ScanReport) -> list[Finding]:
-    samples = report.gpu_samples
-    if not samples:
-        # Still check logs even without samples
-        pass
-
     max_temp = None
-    for s in samples:
+    for s in report.gpu_samples:
         if s.gpu_temperature_c is not None:
             if max_temp is None or s.gpu_temperature_c > max_temp:
                 max_temp = s.gpu_temperature_c

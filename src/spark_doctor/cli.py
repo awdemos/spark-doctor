@@ -92,6 +92,7 @@ def _save_json(report: ScanReport, path: Path) -> None:
 def _build_report(
     *,
     sample_seconds: int,
+    read_logs: bool,
     include_logs: bool,
     use_sudo: bool,
     anonymize: bool,
@@ -117,10 +118,16 @@ def _build_report(
     report.processes = _collect(report, "processes", collect_processes, [])
     report.network = _collect(report, "network", collect_network, {})
 
-    if include_logs:
+    if read_logs:
         report.logs = _collect(report, "logs", collect_logs, {})
+        if not include_logs:
+            report.collector_statuses[-1].optional = True
 
     report.findings = run_rules(report)
+    # Logs are read so log-based rules can fire, but raw log text leaves the machine
+    # only on explicit opt-in; findings carry just the redacted matching lines.
+    if not include_logs:
+        report.logs = {}
 
     if anonymize:
         report = redact_report(report, include_network_identifiers=include_network_identifiers)
@@ -140,8 +147,8 @@ def scan(
     python_executable: str = typer.Option("python3", "--python", help="Python interpreter for the workload's CUDA/package checks (default: python3 on PATH)."),
     json_out: Optional[Path] = typer.Option(None, "--json", help="Write JSON report to this path."),
     markdown_out: Optional[Path] = typer.Option(None, "--markdown", help="Write markdown report."),
-    no_logs: bool = typer.Option(False, "--no-logs", help="Do not collect dmesg/journalctl."),
-    include_logs: bool = typer.Option(False, "--include-logs", help="Collect dmesg/journalctl snippets."),
+    no_logs: bool = typer.Option(False, "--no-logs", help="Do not read dmesg/journalctl at all."),
+    include_logs: bool = typer.Option(False, "--include-logs", help="Include dmesg/journalctl snippets in saved reports."),
     use_sudo: bool = typer.Option(False, "--sudo", help="Allow sudo for firmware collection."),
     include_sensitive_data: bool = typer.Option(False, "--include-sensitive-data", help="Keep raw identifiers and credentials in outputs."),
     include_network_identifiers: bool = typer.Option(
@@ -150,10 +157,10 @@ def scan(
     save: bool = typer.Option(True, "--save/--no-save", help="Save scan under .spark-doctor/reports/."),
 ) -> None:
     """Run collectors, evaluate rules, print findings."""
-    want_logs = include_logs and not no_logs
     report = _build_report(
         sample_seconds=sample_seconds,
-        include_logs=want_logs,
+        read_logs=not no_logs,
+        include_logs=include_logs and not no_logs,
         use_sudo=use_sudo,
         anonymize=not include_sensitive_data,
         include_network_identifiers=include_network_identifiers,
@@ -259,7 +266,7 @@ def recipe_check(
     arch: Optional[str] = typer.Option(None, "--arch", help="Architecture (e.g. aarch64)."),
     mem_available_gb: Optional[float] = typer.Option(None, "--mem-available-gb", min=0),
 ) -> None:
-    """Validate a recipe YAML against MVP rules."""
+    """Validate a recipe YAML for DGX Spark compatibility."""
     if mem_available_gb is not None and not isfinite(mem_available_gb):
         raise typer.BadParameter("must be a finite number", param_hint="--mem-available-gb")
     try:

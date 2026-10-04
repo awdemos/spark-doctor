@@ -82,7 +82,7 @@ Reports are anonymized by default:
 - Hardware serial/UUID fields, English firmware serial-number/UUID lines, and NVIDIA GPU UUIDs redacted. Firmware probes use a per-process C locale for stable labels without changing system settings. Firmware model GUIDs and version numbers are preserved. `--include-network-identifiers` does not expose hardware identifiers; only `--include-sensitive-data` bypasses this protection on scans and exports.
 - HF, NGC, OpenAI, bearer, JWT, and SSH-key patterns redacted.
 - Credentials in process arguments (including `--api-key VALUE`) and structured secret fields redacted.
-- Logs (`dmesg`, `journalctl`) only included with `--include-logs`.
+- Logs (`dmesg`, `journalctl`) are read locally so log-based checks can run, but raw log text is only included in reports with `--include-logs`. Findings may quote a redacted matching line as evidence. `--no-logs` skips reading logs entirely.
 
 `doctor` and `report` reapply redaction to imported scans by default. `--include-network-identifiers` keeps network identifiers; `--include-sensitive-data` explicitly keeps raw data, including credentials, and replaces the old `scan --no-anonymize` option. Review any report before sharing: automatic redaction cannot recognize every possible secret.
 

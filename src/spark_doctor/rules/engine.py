@@ -6,6 +6,8 @@ from ..models import Finding, ScanReport
 
 RuleFn = Callable[[ScanReport], list[Finding]]
 
+_SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
+
 
 class Rule:
     def __init__(self, id: str, title: str, fn: RuleFn) -> None:
@@ -34,7 +36,7 @@ def run_rules(report: ScanReport, rules: list[Rule] | None = None) -> list[Findi
                     explanation="Rule raised an exception during evaluation.",
                 )
             )
-    return findings
+    return sorted(findings, key=lambda f: _SEVERITY_ORDER[f.severity])
 
 
 def _lazy_rules() -> list[Rule]:

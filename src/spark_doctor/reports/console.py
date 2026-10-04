@@ -58,7 +58,7 @@ def render_console(report: ScanReport, console: Console | None = None) -> None:
         if report.incomplete:
             console.print("No findings from the checks that completed.")
         else:
-            console.print("[green]No issues detected by MVP rule set.[/]")
+            console.print("[green]No issues detected.[/]")
     else:
         console.print("\n[bold]Findings:[/]")
         for i, f in enumerate(report.findings, start=1):

@@ -41,7 +41,7 @@ def collect_processes(limit: int = 50) -> tuple[list[ProcessInfo], CollectorStat
     unavailable = object()
     try:
         for p in psutil.process_iter(
-            ["pid", "name", "cmdline", "memory_info", "cpu_percent", "memory_percent"],
+            ["pid", "name", "cmdline", "memory_info", "memory_percent"],
             ad_value=unavailable,
         ):
             try:
@@ -71,7 +71,6 @@ def collect_processes(limit: int = 50) -> tuple[list[ProcessInfo], CollectorStat
                 command=name or "",
                 args=args_str,
                 rss_kb=(rss // 1024) if rss else None,
-                cpu_percent=info.get("cpu_percent"),
                 mem_percent=info.get("memory_percent"),
                 detected_backend=backend,
             )

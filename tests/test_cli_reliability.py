@@ -258,3 +258,51 @@ def test_imported_report_exports_respect_identifier_privacy_flags(
     assert (address in result.stdout) is keep_network
     assert (serial in result.stdout) is keep_hardware
     assert (uuid in result.stdout) is keep_hardware
+
+
+KV_OOM_LOG = "ValueError: No available memory for the cache blocks."
+
+
+def _logs(monkeypatch: pytest.MonkeyPatch, *, ok: bool = True, calls: list[str] | None = None) -> None:
+    def fake() -> tuple[dict[str, str], CollectorStatus]:
+        if calls is not None:
+            calls.append("logs")
+        errors = [] if ok else ["dmesg: nonzero_exit: Operation not permitted"]
+        return ({"journal_tail": KV_OOM_LOG} if ok else {}), CollectorStatus(name="logs", ok=ok, errors=errors)
+    monkeypatch.setattr(cli, "collect_logs", fake)
+
+
+def test_default_scan_runs_log_rules_without_shipping_logs(
+    collectors: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _logs(monkeypatch)
+    output = tmp_path / "scan.json"
+    result = runner.invoke(cli.app, ["scan", "--no-save", "--json", str(output)])
+    saved = json.loads(output.read_text())
+    assert result.exit_code == 2
+    assert any(f["rule_id"] == "backend.kv_cache_oom" for f in saved["findings"])
+    assert saved["logs"] == {}
+
+
+def test_include_logs_keeps_log_text(collectors: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _logs(monkeypatch)
+    output = tmp_path / "scan.json"
+    runner.invoke(cli.app, ["scan", "--no-save", "--include-logs", "--json", str(output)])
+    assert json.loads(output.read_text())["logs"] == {"journal_tail": KV_OOM_LOG}
+
+
+def test_no_logs_skips_reading(collectors: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    _logs(monkeypatch, calls=calls)
+    result = runner.invoke(cli.app, ["scan", "--no-save", "--no-logs", "--include-logs"])
+    assert calls == []
+    assert result.exit_code == 0
+
+
+def test_unreadable_logs_only_fail_scan_when_requested(collectors: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    _logs(monkeypatch, ok=False)
+    default = runner.invoke(cli.app, ["scan", "--no-save"], env={"COLUMNS": "240"})
+    assert default.exit_code == 0
+    assert "Operation not permitted" in default.stdout
+    requested = runner.invoke(cli.app, ["scan", "--no-save", "--include-logs"])
+    assert requested.exit_code == 3
