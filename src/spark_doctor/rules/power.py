@@ -4,6 +4,7 @@ from ..models import Finding, MetricSample, ScanReport
 from .engine import Rule
 
 
+RULE_ID = "power.low_draw_under_load"
 LOW_CLOCK_MHZ = 800
 # A stuck unit pins the clock near 800 MHz; memory-bound decode on a healthy GB10 sits near
 # boost clock while drawing the same ~15-20 W. Only the clock separates the two.
@@ -21,15 +22,20 @@ def _consecutive(previous: MetricSample, current: MetricSample) -> bool:
     return 0 < gap <= 5
 
 
-def _healthy_clock_finding(run: list[MetricSample]) -> Finding:
+def _run_evidence(run: list[MetricSample]) -> list[str]:
     evidence = [f"Longest qualifying run: {len(run)} consecutive samples."]
     for s in run[:5]:
+        clock = f"{s.gpu_clock_mhz:.0f}" if s.gpu_clock_mhz is not None else "n/a"
         evidence.append(
             f"GPU util {s.gpu_utilization_percent:.0f}%, power {s.gpu_power_draw_watts:.1f} W, "
-            f"clock {s.gpu_clock_mhz:.0f} MHz"
+            f"clock {clock} MHz"
         )
+    return evidence
+
+
+def _healthy_clock_finding(evidence: list[str]) -> Finding:
     return Finding(
-        rule_id="power.low_draw_under_load",
+        rule_id=RULE_ID,
         title="Low GPU power draw with a normal clock",
         severity="info",
         confidence="medium",
@@ -66,32 +72,23 @@ def _evaluate(report: ScanReport) -> list[Finding]:
         return []
 
     clocks = [s.gpu_clock_mhz for s in longest_run]
-    clock_missing = any(c is None for c in clocks)
     low_clock = all(c is not None and c <= LOW_CLOCK_MHZ for c in clocks)
     healthy_clock = all(c is not None and c > HEALTHY_CLOCK_MHZ for c in clocks)
+    evidence = _run_evidence(longest_run)
 
     if healthy_clock:
-        return [_healthy_clock_finding(longest_run)]
+        return [_healthy_clock_finding(evidence)]
+
+    if None in clocks:
+        evidence.insert(1, "GPU clock was not reported, so a low-power state cannot be confirmed or ruled out.")
 
     sustained = len(longest_run) >= 3
     severity = "critical" if sustained else "warning"
     confidence = "high" if (sustained and low_clock) else ("medium" if sustained else "low")
 
-    evidence = [f"Longest qualifying run: {len(longest_run)} consecutive samples."]
-    if clock_missing:
-        evidence.append("GPU clock was not reported, so a low-power state cannot be confirmed or ruled out.")
-        confidence = "low" if confidence == "high" else confidence
-    for s in longest_run[:5]:
-        util = s.gpu_utilization_percent
-        power = s.gpu_power_draw_watts
-        clock = s.gpu_clock_mhz
-        evidence.append(
-            f"GPU util {util:.0f}%, power {power:.1f} W, clock {clock if clock is not None else 'n/a'} MHz"
-        )
-
     return [
         Finding(
-            rule_id="power.low_draw_under_load",
+            rule_id=RULE_ID,
             title="Possible GPU low-power state",
             severity=severity,
             confidence=confidence,
@@ -126,7 +123,7 @@ def _evaluate(report: ScanReport) -> list[Finding]:
 
 
 rule_power_low_draw_under_load = Rule(
-    id="power.low_draw_under_load",
+    id=RULE_ID,
     title="Possible GPU low-power state",
     fn=_evaluate,
 )

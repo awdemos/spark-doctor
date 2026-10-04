@@ -38,12 +38,12 @@ def test_thermal_fixture_triggers_critical():
     assert thermal[0].severity == "critical"
 
 
-def _low_sample(timestamp: datetime | None = None) -> MetricSample:
+def _low_sample(timestamp: datetime | None = None, clock: float | None = 611) -> MetricSample:
     return MetricSample(
         timestamp=timestamp,
         gpu_utilization_percent=95,
         gpu_power_draw_watts=14,
-        gpu_clock_mhz=611,
+        gpu_clock_mhz=clock,
     )
 
 
@@ -106,12 +106,8 @@ def test_sustained_evidence_comes_from_consecutive_run() -> None:
     assert any("3 consecutive" in line for line in finding.evidence)
 
 
-def _decode_sample(clock: float | None) -> MetricSample:
-    return MetricSample(gpu_utilization_percent=95, gpu_power_draw_watts=17.7, gpu_clock_mhz=clock)
-
-
 def test_low_draw_with_healthy_clock_is_info_without_power_cycle_advice() -> None:
-    report = ScanReport(gpu_samples=[_decode_sample(1982) for _ in range(5)])
+    report = ScanReport(gpu_samples=[_low_sample(clock=1982) for _ in range(5)])
     finding = rule_power_low_draw_under_load.fn(report)[0]
     assert finding.severity == "info"
     advice = " ".join(finding.recommended_actions).lower()
@@ -120,14 +116,14 @@ def test_low_draw_with_healthy_clock_is_info_without_power_cycle_advice() -> Non
 
 
 def test_low_draw_with_low_clock_stays_critical() -> None:
-    report = ScanReport(gpu_samples=[_decode_sample(799) for _ in range(3)])
+    report = ScanReport(gpu_samples=[_low_sample(clock=799) for _ in range(3)])
     finding = rule_power_low_draw_under_load.fn(report)[0]
     assert finding.severity == "critical"
     assert finding.confidence == "high"
 
 
 def test_missing_clock_is_called_out_and_not_high_confidence() -> None:
-    report = ScanReport(gpu_samples=[_decode_sample(None) for _ in range(3)])
+    report = ScanReport(gpu_samples=[_low_sample(clock=None) for _ in range(3)])
     finding = rule_power_low_draw_under_load.fn(report)[0]
     assert finding.severity == "critical"
     assert finding.confidence != "high"
@@ -135,5 +131,5 @@ def test_missing_clock_is_called_out_and_not_high_confidence() -> None:
 
 
 def test_ambiguous_clock_keeps_existing_behaviour() -> None:
-    report = ScanReport(gpu_samples=[_decode_sample(900) for _ in range(3)])
+    report = ScanReport(gpu_samples=[_low_sample(clock=900) for _ in range(3)])
     assert rule_power_low_draw_under_load.fn(report)[0].severity == "critical"
