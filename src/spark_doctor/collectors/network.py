@@ -67,7 +67,11 @@ def collect_network() -> tuple[dict[str, Any], CollectorStatus]:
     ib = run(["ibstat"], timeout=5)
     if ib.ok:
         out["ibstat"] = ib.stdout
-    elif ib.error != "command_not_found" or any(i.get("connectx_like") for i in interfaces):
+    # ibstat (infiniband-diags) is not installed on DGX OS by default, and `rdma link` already
+    # reports ConnectX port state, so a missing ibstat only matters when rdma failed too.
+    elif ib.error != "command_not_found" or (
+        not rdma.ok and any(i.get("connectx_like") for i in interfaces)
+    ):
         status.errors.append(f"ibstat: {ib.error}: {ib.stderr.strip()[:200]}")
 
     status.ok = bool(interfaces or addr.ok or link.ok) or not status.errors

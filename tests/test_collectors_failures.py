@@ -291,3 +291,24 @@ def test_process_unavailable_attributes_mark_report_incomplete(monkeypatch: pyte
     assert data[0].args == "" and data[0].rss_kb is None
     assert status.errors
     assert ScanReport(processes=data, collector_statuses=[status]).incomplete
+
+
+@pytest.mark.parametrize("rdma_ok", [True, False])
+def test_missing_ibstat_on_connectx_only_matters_without_rdma(
+    monkeypatch: pytest.MonkeyPatch, rdma_ok: bool,
+) -> None:
+    # DGX OS ships iproute2's `rdma` but not infiniband-diags' `ibstat`.
+    def fake_run(args: list[str], **kw: Any) -> ShellResult:
+        if args[0] == "ibstat" or (args[0] == "rdma" and not rdma_ok):
+            return result(error="command_not_found")
+        return result("link rocep1s0f1/1 state ACTIVE physical_state LINK_UP netdev enp1s0f1np1")
+
+    interface = "/sys/class/net/enp1s0f1np1"
+    monkeypatch.setattr(network.glob, "glob", lambda _: [interface])
+    monkeypatch.setattr(network, "run", fake_run)
+    monkeypatch.setattr(network, "read_text", lambda path: "200000" if path.endswith("/speed") else "up")
+    monkeypatch.setattr(network.os, "readlink", lambda _: "/drivers/mlx5_core")
+    data, status = network.collect_network()
+    assert data["interfaces"][0]["connectx_like"] is True
+    assert any("ibstat" in e for e in status.errors) is (not rdma_ok)
+    assert ScanReport(network=data, collector_statuses=[status]).incomplete is (not rdma_ok)
