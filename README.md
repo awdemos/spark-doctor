@@ -48,7 +48,7 @@ An explicitly CPU-tagged PyTorch build with no CUDA support produces a warning f
 
 | ID | Detects |
 |---|---|
-| `power.low_draw_under_load` | High GPU utilization with suspiciously low power draw (e.g. 14 W cap). |
+| `power.low_draw_under_load` | High GPU utilization with suspiciously low power draw (e.g. 14 W cap). Downgraded to info when the GPU clock is normal, since memory-bound decode draws little power at boost clock. |
 | `thermal.shutdown_risk` | GPU temp ≥ 85/90 C or thermal events in logs. |
 | `memory.uma_pressure` | Low `MemAvailable`, high memory PSI, or heavy swap use. |
 | `runtime.docker_unhealthy` | Docker/NVIDIA container runtime missing or misconfigured. |

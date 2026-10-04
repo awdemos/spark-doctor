@@ -4,6 +4,12 @@ from ..models import Finding, MetricSample, ScanReport
 from .engine import Rule
 
 
+LOW_CLOCK_MHZ = 800
+# A stuck unit pins the clock near 800 MHz; memory-bound decode on a healthy GB10 sits near
+# boost clock while drawing the same ~15-20 W. Only the clock separates the two.
+HEALTHY_CLOCK_MHZ = 1000
+
+
 def _consecutive(previous: MetricSample, current: MetricSample) -> bool:
     if previous.timestamp is None or current.timestamp is None:
         return previous.timestamp is None and current.timestamp is None
@@ -13,6 +19,32 @@ def _consecutive(previous: MetricSample, current: MetricSample) -> bool:
         return False
     # Collectors poll at one-second intervals; long gaps cannot establish persistence.
     return 0 < gap <= 5
+
+
+def _healthy_clock_finding(run: list[MetricSample]) -> Finding:
+    evidence = [f"Longest qualifying run: {len(run)} consecutive samples."]
+    for s in run[:5]:
+        evidence.append(
+            f"GPU util {s.gpu_utilization_percent:.0f}%, power {s.gpu_power_draw_watts:.1f} W, "
+            f"clock {s.gpu_clock_mhz:.0f} MHz"
+        )
+    return Finding(
+        rule_id="power.low_draw_under_load",
+        title="Low GPU power draw with a normal clock",
+        severity="info",
+        confidence="medium",
+        evidence=evidence,
+        explanation=(
+            "Utilization is high and power draw is low, but the GPU clock is at a normal level. "
+            "That is expected for memory-bound work such as single-request LLM decode, and does "
+            "not look like the stuck low-power state, which pins the clock low."
+        ),
+        recommended_actions=[
+            "No action needed if generation speed (tokens/s) matches what you normally see.",
+            "If speed is below your known baseline, re-run `spark-doctor scan --sample-seconds 30` under load and check whether the clock drops.",
+        ],
+        source_note="Healthy GB10 decode draws ~15-20 W at boost clock; the stuck state shows the same draw at ~800 MHz.",
+    )
 
 
 def _evaluate(report: ScanReport) -> list[Finding]:
@@ -33,15 +65,22 @@ def _evaluate(report: ScanReport) -> list[Finding]:
     if not longest_run:
         return []
 
-    low_clock = all(
-        (s.gpu_clock_mhz is not None and s.gpu_clock_mhz <= 800) for s in longest_run
-    )
+    clocks = [s.gpu_clock_mhz for s in longest_run]
+    clock_missing = any(c is None for c in clocks)
+    low_clock = all(c is not None and c <= LOW_CLOCK_MHZ for c in clocks)
+    healthy_clock = all(c is not None and c > HEALTHY_CLOCK_MHZ for c in clocks)
+
+    if healthy_clock:
+        return [_healthy_clock_finding(longest_run)]
 
     sustained = len(longest_run) >= 3
     severity = "critical" if sustained else "warning"
     confidence = "high" if (sustained and low_clock) else ("medium" if sustained else "low")
 
     evidence = [f"Longest qualifying run: {len(longest_run)} consecutive samples."]
+    if clock_missing:
+        evidence.append("GPU clock was not reported, so a low-power state cannot be confirmed or ruled out.")
+        confidence = "low" if confidence == "high" else confidence
     for s in longest_run[:5]:
         util = s.gpu_utilization_percent
         power = s.gpu_power_draw_watts
